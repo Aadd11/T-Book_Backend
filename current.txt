@@ -1,0 +1,4441 @@
+Directory structure:
+└── T-Book_Backend/
+    ├── Dockerfile
+    ├── alembic.ini
+    ├── current.txt
+    ├── docker-compose.yml
+    ├── requirements.txt
+    ├── alembic/
+    │   ├── README
+    │   ├── env.py
+    │   ├── script.py.mako
+    │   ├── __pycache__/
+    │   └── versions/
+    │       ├── 83b887301cca_initial_tables.py
+    │       ├── d4b47cf318dc_initial_migration.py
+    │       └── __pycache__/
+    ├── app/
+    │   ├── main.py
+    │   ├── __pycache__/
+    │   ├── api/
+    │   │   └── api_v1/
+    │   │       ├── router.py
+    │   │       ├── __pycache__/
+    │   │       └── endpoints/
+    │   │           ├── books.py
+    │   │           ├── search.py
+    │   │           ├── utils.py
+    │   │           └── __pycache__/
+    │   ├── core/
+    │   │   ├── celery_app.py
+    │   │   ├── config.py
+    │   │   ├── db.py
+    │   │   ├── es.py
+    │   │   └── __pycache__/
+    │   ├── crud/
+    │   │   ├── crud_author.py
+    │   │   ├── crud_book.py
+    │   │   ├── crud_genre.py
+    │   │   └── __pycache__/
+    │   ├── models/
+    │   │   ├── association.py
+    │   │   ├── author.py
+    │   │   ├── base.py
+    │   │   ├── book.py
+    │   │   ├── genre.py
+    │   │   └── __pycache__/
+    │   ├── schemas/
+    │   │   ├── author.py
+    │   │   ├── book.py
+    │   │   ├── common.py
+    │   │   ├── genre.py
+    │   │   └── __pycache__/
+    │   ├── services/
+    │   │   ├── search_service.py
+    │   │   └── __pycache__/
+    │   └── tasks/
+    │       ├── scrape.py
+    │       └── __pycache__/
+    └── scripts/
+        └── generate_data.py
+
+================================================
+File: Dockerfile
+================================================
+FROM python:3.11-slim
+
+# RUN mv /var/lib/apt/lists/* /root/
+
+WORKDIR /app
+
+ENV PYTHONDONTWRITEBYTECODE 1
+ENV PYTHONUNBUFFERED 1
+
+RUN apt-get update -o Acquire::http::No-Cache=True \
+    && apt-get install -y --no-install-recommends \
+    gcc \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+# --- Add a non-root user and switch to it ---
+ARG USER=appuser
+ARG UID=1000
+RUN adduser --system --uid ${UID} --no-create-home ${USER}
+USER ${USER}
+# -------------------------------------------
+
+EXPOSE 8000
+
+# NOTE: The ENTRYPOINT or CMD in docker-compose.yml will now run as 'appuser'
+
+
+================================================
+File: alembic.ini
+================================================
+# A generic, single database configuration.
+
+[alembic]
+# path to migration scripts
+# Use forward slashes (/) also on windows to provide an os agnostic path
+script_location = alembic
+
+# template used to generate migration file names; The default value is %%(rev)s_%%(slug)s
+# Uncomment the line below if you want the files to be prepended with date and time
+# see https://alembic.sqlalchemy.org/en/latest/tutorial.html#editing-the-ini-file
+# for all available tokens
+# file_template = %%(year)d_%%(month).2d_%%(day).2d_%%(hour).2d%%(minute).2d-%%(rev)s_%%(slug)s
+
+# sys.path path, will be prepended to sys.path if present.
+# defaults to the current working directory.
+prepend_sys_path = .
+
+# timezone to use when rendering the date within the migration file
+# as well as the filename.
+# If specified, requires the python>=3.9 or backports.zoneinfo library and tzdata library.
+# Any required deps can installed by adding `alembic[tz]` to the pip requirements
+# string value is passed to ZoneInfo()
+# leave blank for localtime
+# timezone =
+
+# max length of characters to apply to the "slug" field
+# truncate_slug_length = 40
+
+# set to 'true' to run the environment during
+# the 'revision' command, regardless of autogenerate
+# revision_environment = false
+
+# set to 'true' to allow .pyc and .pyo files without
+# a source .py file to be detected as revisions in the
+# versions/ directory
+# sourceless = false
+
+# version location specification; This defaults
+# to alembic/versions.  When using multiple version
+# directories, initial revisions must be specified with --version-path.
+# The path separator used here should be the separator specified by "version_path_separator" below.
+# version_locations = %(here)s/bar:%(here)s/bat:alembic/versions
+
+# version path separator; As mentioned above, this is the character used to split
+# version_locations. The default within new alembic.ini files is "os", which uses os.pathsep.
+# If this key is omitted entirely, it falls back to the legacy behavior of splitting on spaces and/or commas.
+# Valid values for version_path_separator are:
+#
+# version_path_separator = :
+# version_path_separator = ;
+# version_path_separator = space
+# version_path_separator = newline
+#
+# Use os.pathsep. Default configuration used for new projects.
+version_path_separator = os
+
+# set to 'true' to search source files recursively
+# in each "version_locations" directory
+# new in Alembic version 1.10
+# recursive_version_locations = false
+
+# the output encoding used when revision files
+# are written from script.py.mako
+# output_encoding = utf-8
+
+sqlalchemy.url = postgresql://user:password@db:5432/bookdb
+
+
+[post_write_hooks]
+# post_write_hooks defines scripts or Python functions that are run
+# on newly generated revision scripts.  See the documentation for further
+# detail and examples
+
+# format using "black" - use the console_scripts runner, against the "black" entrypoint
+# hooks = black
+# black.type = console_scripts
+# black.entrypoint = black
+# black.options = -l 79 REVISION_SCRIPT_FILENAME
+
+# lint with attempts to fix using "ruff" - use the exec runner, execute a binary
+# hooks = ruff
+# ruff.type = exec
+# ruff.executable = %(here)s/.venv/bin/ruff
+# ruff.options = check --fix REVISION_SCRIPT_FILENAME
+
+# Logging configuration
+[loggers]
+keys = root,sqlalchemy,alembic
+
+[handlers]
+keys = console
+
+[formatters]
+keys = generic
+
+[logger_root]
+level = WARNING
+handlers = console
+qualname =
+
+[logger_sqlalchemy]
+level = WARNING
+handlers =
+qualname = sqlalchemy.engine
+
+[logger_alembic]
+level = INFO
+handlers =
+qualname = alembic
+
+[handler_console]
+class = StreamHandler
+args = (sys.stderr,)
+level = NOTSET
+formatter = generic
+
+[formatter_generic]
+format = %(levelname)-5.5s [%(name)s] %(message)s
+datefmt = %H:%M:%S
+
+
+
+================================================
+File: current.txt
+================================================
+Directory structure:
+└── T-Book_Backend/
+    ├── Dockerfile
+    ├── alembic.ini
+    ├── docker-compose.yml
+    ├── requirements.txt
+    ├── alembic/
+    │   ├── README
+    │   ├── env.py
+    │   ├── script.py.mako
+    │   ├── __pycache__/
+    │   └── versions/
+    │       ├── 83b887301cca_initial_tables.py
+    │       ├── d4b47cf318dc_initial_migration.py
+    │       └── __pycache__/
+    ├── app/
+    │   ├── main.py
+    │   ├── __pycache__/
+    │   ├── api/
+    │   │   └── api_v1/
+    │   │       ├── router.py
+    │   │       ├── __pycache__/
+    │   │       └── endpoints/
+    │   │           ├── books.py
+    │   │           ├── search.py
+    │   │           ├── utils.py
+    │   │           └── __pycache__/
+    │   ├── core/
+    │   │   ├── celery_app.py
+    │   │   ├── config.py
+    │   │   ├── db.py
+    │   │   ├── es.py
+    │   │   └── __pycache__/
+    │   ├── crud/
+    │   │   ├── crud_author.py
+    │   │   ├── crud_book.py
+    │   │   ├── crud_genre.py
+    │   │   └── __pycache__/
+    │   ├── models/
+    │   │   ├── association.py
+    │   │   ├── author.py
+    │   │   ├── base.py
+    │   │   ├── book.py
+    │   │   ├── genre.py
+    │   │   └── __pycache__/
+    │   ├── schemas/
+    │   │   ├── author.py
+    │   │   ├── book.py
+    │   │   ├── common.py
+    │   │   ├── genre.py
+    │   │   └── __pycache__/
+    │   ├── services/
+    │   │   ├── search_service.py
+    │   │   └── __pycache__/
+    │   └── tasks/
+    │       ├── scrape.py
+    │       └── __pycache__/
+    └── scripts/
+        └── generate_data.py
+
+================================================
+File: Dockerfile
+================================================
+FROM python:3.11-slim
+
+# RUN mv /var/lib/apt/lists/* /root/
+
+WORKDIR /app
+
+ENV PYTHONDONTWRITEBYTECODE 1
+ENV PYTHONUNBUFFERED 1
+
+RUN apt-get update -o Acquire::http::No-Cache=True \
+    && apt-get install -y --no-install-recommends \
+    gcc \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+EXPOSE 8000
+
+
+================================================
+File: alembic.ini
+================================================
+# A generic, single database configuration.
+
+[alembic]
+# path to migration scripts
+# Use forward slashes (/) also on windows to provide an os agnostic path
+script_location = alembic
+
+# template used to generate migration file names; The default value is %%(rev)s_%%(slug)s
+# Uncomment the line below if you want the files to be prepended with date and time
+# see https://alembic.sqlalchemy.org/en/latest/tutorial.html#editing-the-ini-file
+# for all available tokens
+# file_template = %%(year)d_%%(month).2d_%%(day).2d_%%(hour).2d%%(minute).2d-%%(rev)s_%%(slug)s
+
+# sys.path path, will be prepended to sys.path if present.
+# defaults to the current working directory.
+prepend_sys_path = .
+
+# timezone to use when rendering the date within the migration file
+# as well as the filename.
+# If specified, requires the python>=3.9 or backports.zoneinfo library and tzdata library.
+# Any required deps can installed by adding `alembic[tz]` to the pip requirements
+# string value is passed to ZoneInfo()
+# leave blank for localtime
+# timezone =
+
+# max length of characters to apply to the "slug" field
+# truncate_slug_length = 40
+
+# set to 'true' to run the environment during
+# the 'revision' command, regardless of autogenerate
+# revision_environment = false
+
+# set to 'true' to allow .pyc and .pyo files without
+# a source .py file to be detected as revisions in the
+# versions/ directory
+# sourceless = false
+
+# version location specification; This defaults
+# to alembic/versions.  When using multiple version
+# directories, initial revisions must be specified with --version-path.
+# The path separator used here should be the separator specified by "version_path_separator" below.
+# version_locations = %(here)s/bar:%(here)s/bat:alembic/versions
+
+# version path separator; As mentioned above, this is the character used to split
+# version_locations. The default within new alembic.ini files is "os", which uses os.pathsep.
+# If this key is omitted entirely, it falls back to the legacy behavior of splitting on spaces and/or commas.
+# Valid values for version_path_separator are:
+#
+# version_path_separator = :
+# version_path_separator = ;
+# version_path_separator = space
+# version_path_separator = newline
+#
+# Use os.pathsep. Default configuration used for new projects.
+version_path_separator = os
+
+# set to 'true' to search source files recursively
+# in each "version_locations" directory
+# new in Alembic version 1.10
+# recursive_version_locations = false
+
+# the output encoding used when revision files
+# are written from script.py.mako
+# output_encoding = utf-8
+
+sqlalchemy.url = postgresql://user:password@db:5432/bookdb
+
+
+[post_write_hooks]
+# post_write_hooks defines scripts or Python functions that are run
+# on newly generated revision scripts.  See the documentation for further
+# detail and examples
+
+# format using "black" - use the console_scripts runner, against the "black" entrypoint
+# hooks = black
+# black.type = console_scripts
+# black.entrypoint = black
+# black.options = -l 79 REVISION_SCRIPT_FILENAME
+
+# lint with attempts to fix using "ruff" - use the exec runner, execute a binary
+# hooks = ruff
+# ruff.type = exec
+# ruff.executable = %(here)s/.venv/bin/ruff
+# ruff.options = check --fix REVISION_SCRIPT_FILENAME
+
+# Logging configuration
+[loggers]
+keys = root,sqlalchemy,alembic
+
+[handlers]
+keys = console
+
+[formatters]
+keys = generic
+
+[logger_root]
+level = WARNING
+handlers = console
+qualname =
+
+[logger_sqlalchemy]
+level = WARNING
+handlers =
+qualname = sqlalchemy.engine
+
+[logger_alembic]
+level = INFO
+handlers =
+qualname = alembic
+
+[handler_console]
+class = StreamHandler
+args = (sys.stderr,)
+level = NOTSET
+formatter = generic
+
+[formatter_generic]
+format = %(levelname)-5.5s [%(name)s] %(message)s
+datefmt = %H:%M:%S
+
+
+
+================================================
+File: docker-compose.yml
+================================================
+version: '3.8'
+
+networks:
+  backend-network:
+    driver: bridge
+
+services:
+  db:
+    command: ["postgres", "-c", "listen_addresses=*"]
+    networks:
+      - backend-network
+    image: postgres:15-alpine
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: bookdb
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d bookdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    networks:
+      - backend-network
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  es:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.2
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+    networks:
+      - backend-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+
+  backend:
+    networks:
+      - backend-network
+    build: .
+    command: bash -c "sleep 10 && alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+    environment:
+      - SYNC_DATABASE_URL=postgresql://user:password@db:5432/bookdb  # Not localhost!
+      - DATABASE_URL=postgresql+asyncpg://user:password@db:5432/bookdb
+      - ELASTICSEARCH_URL=http://es:9200
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      es:
+        condition: service_healthy
+
+  worker:
+    build: .
+    networks:
+      - backend-network
+    command: bash -c "sleep 15 && celery -A app.core.celery_app worker --loglevel=info -P gevent --without-gossip --without-mingle --without-heartbeat"
+    volumes:
+      - .:/app
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://user:password@db:5432/bookdb
+      - ELASTICSEARCH_URL=http://es:9200
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+    depends_on:
+      - db
+      - redis
+      - es
+
+volumes:
+  postgres_data:
+  redis_data:
+  es_data:
+
+
+================================================
+File: requirements.txt
+================================================
+fastapi
+uvicorn[standard] # ASGI server
+sqlalchemy[asyncio] >= 2.0 # ORM
+asyncpg # Postgres driver for asyncio
+pydantic # Data validation (comes with FastAPI)
+pydantic-settings # For loading config from env vars
+elasticsearch[async]==8.13.2 # Elasticsearch async client
+celery >= 5.0 # Task queue
+redis # Celery broker and potentially caching
+python-dotenv # To load .env file for local dev
+alembic # Database migrations
+psycopg2-binary # Needed by Alembic even for asyncpg usage sometimes
+requests # For the data generation script (sync ok here)
+faker # For generating fake data
+uuid # Built-in
+gevent
+httpx>=0.27.0
+
+
+================================================
+File: alembic/README
+================================================
+Generic single-database configuration.
+
+
+================================================
+File: alembic/env.py
+================================================
+# alembic/env.py
+
+from logging.config import fileConfig
+from sqlalchemy import engine_from_config
+from sqlalchemy import pool
+from alembic import context
+import sys
+import os
+
+# Add your project root to Python path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Import your Base and models
+from app.core.db import Base  # This is critical
+from app.core.config import settings
+from app.models.author import Author
+from app.models.book import Book
+from app.models.genre import Genre
+
+# This is the key line that was missing/misconfigured
+target_metadata = Base.metadata
+
+# Rest of the file remains the same below this line...
+config = context.config
+
+if config.config_file_name is not None:
+    fileConfig(config.config_file_name)
+
+def run_migrations_offline() -> None:
+    url = config.get_main_option("sqlalchemy.url")
+    context.configure(
+        url=url,
+        target_metadata=target_metadata,  # This now points to your Base metadata
+        literal_binds=True,
+        dialect_opts={"paramstyle": "named"},
+    )
+
+    with context.begin_transaction():
+        context.run_migrations()
+
+def run_migrations_online() -> None:
+    connectable = engine_from_config(
+        config.get_section(config.config_ini_section),
+        prefix="sqlalchemy.",
+        poolclass=pool.NullPool,
+    )
+
+    with connectable.connect() as connection:
+        context.configure(
+            connection=connection, 
+            target_metadata=target_metadata  # Properly configured now
+        )
+
+        with context.begin_transaction():
+            context.run_migrations()
+
+if context.is_offline_mode():
+    run_migrations_offline()
+else:
+    run_migrations_online()
+
+
+================================================
+File: alembic/script.py.mako
+================================================
+"""${message}
+
+Revision ID: ${up_revision}
+Revises: ${down_revision | comma,n}
+Create Date: ${create_date}
+
+"""
+from typing import Sequence, Union
+
+from alembic import op
+import sqlalchemy as sa
+${imports if imports else ""}
+
+# revision identifiers, used by Alembic.
+revision: str = ${repr(up_revision)}
+down_revision: Union[str, None] = ${repr(down_revision)}
+branch_labels: Union[str, Sequence[str], None] = ${repr(branch_labels)}
+depends_on: Union[str, Sequence[str], None] = ${repr(depends_on)}
+
+
+def upgrade() -> None:
+    """Upgrade schema."""
+    ${upgrades if upgrades else "pass"}
+
+
+def downgrade() -> None:
+    """Downgrade schema."""
+    ${downgrades if downgrades else "pass"}
+
+
+
+
+================================================
+File: alembic/versions/83b887301cca_initial_tables.py
+================================================
+"""Initial tables
+
+Revision ID: 83b887301cca
+Revises: d4b47cf318dc
+Create Date: 2025-04-27 00:45:43.019702
+
+"""
+from typing import Sequence, Union
+
+from alembic import op
+import sqlalchemy as sa
+
+
+# revision identifiers, used by Alembic.
+revision: str = '83b887301cca'
+down_revision: Union[str, None] = 'd4b47cf318dc'
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
+
+
+def upgrade() -> None:
+    """Upgrade schema."""
+    # ### commands auto generated by Alembic - please adjust! ###
+    pass
+    # ### end Alembic commands ###
+
+
+def downgrade() -> None:
+    """Downgrade schema."""
+    # ### commands auto generated by Alembic - please adjust! ###
+    pass
+    # ### end Alembic commands ###
+
+
+
+================================================
+File: alembic/versions/d4b47cf318dc_initial_migration.py
+================================================
+"""Initial migration
+
+Revision ID: d4b47cf318dc
+Revises: 
+Create Date: 2025-04-26 22:16:56.109826
+
+"""
+from typing import Sequence, Union
+
+from alembic import op
+import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
+
+# revision identifiers, used by Alembic.
+revision: str = 'd4b47cf318dc'
+down_revision: Union[str, None] = None
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
+
+
+def upgrade() -> None:
+    """Upgrade schema."""
+    # ### commands auto generated by Alembic - please adjust! ###
+    op.create_table('authors',
+    sa.Column('name', sa.String(), nullable=False),
+    sa.Column('id', sa.UUID(), nullable=False),
+    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
+    sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
+    sa.PrimaryKeyConstraint('id')
+    )
+    op.create_index(op.f('ix_authors_name'), 'authors', ['name'], unique=True)
+    op.create_table('books',
+    sa.Column('title', sa.String(), nullable=False),
+    sa.Column('year_published', sa.Integer(), nullable=True),
+    sa.Column('summary', sa.Text(), nullable=True),
+    sa.Column('age_rating', sa.String(), nullable=True),
+    sa.Column('language', sa.String(), nullable=True),
+    sa.Column('book_size_pages', sa.Integer(), nullable=True),
+    sa.Column('book_size_description', sa.String(), nullable=True),
+    sa.Column('average_rating', sa.Float(), nullable=True),
+    sa.Column('rating_details', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+    sa.Column('source_url', sa.String(), nullable=True),
+    sa.Column('isbn_10', sa.String(length=10), nullable=True),
+    sa.Column('isbn_13', sa.String(length=13), nullable=True),
+    sa.Column('id', sa.UUID(), nullable=False),
+    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
+    sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
+    sa.PrimaryKeyConstraint('id')
+    )
+    op.create_index(op.f('ix_books_average_rating'), 'books', ['average_rating'], unique=False)
+    op.create_index(op.f('ix_books_isbn_10'), 'books', ['isbn_10'], unique=False)
+    op.create_index(op.f('ix_books_isbn_13'), 'books', ['isbn_13'], unique=True)
+    op.create_index(op.f('ix_books_language'), 'books', ['language'], unique=False)
+    op.create_index(op.f('ix_books_title'), 'books', ['title'], unique=False)
+    op.create_index(op.f('ix_books_year_published'), 'books', ['year_published'], unique=False)
+    op.create_table('genres',
+    sa.Column('name', sa.String(), nullable=False),
+    sa.Column('id', sa.UUID(), nullable=False),
+    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
+    sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
+    sa.PrimaryKeyConstraint('id')
+    )
+    op.create_index(op.f('ix_genres_name'), 'genres', ['name'], unique=True)
+    op.create_table('book_authors',
+    sa.Column('book_id', sa.UUID(), nullable=False),
+    sa.Column('author_id', sa.UUID(), nullable=False),
+    sa.ForeignKeyConstraint(['author_id'], ['authors.id'], ),
+    sa.ForeignKeyConstraint(['book_id'], ['books.id'], ),
+    sa.PrimaryKeyConstraint('book_id', 'author_id')
+    )
+    op.create_table('book_genres',
+    sa.Column('book_id', sa.UUID(), nullable=False),
+    sa.Column('genre_id', sa.UUID(), nullable=False),
+    sa.ForeignKeyConstraint(['book_id'], ['books.id'], ),
+    sa.ForeignKeyConstraint(['genre_id'], ['genres.id'], ),
+    sa.PrimaryKeyConstraint('book_id', 'genre_id')
+    )
+    # ### end Alembic commands ###
+
+
+def downgrade() -> None:
+    """Downgrade schema."""
+    # ### commands auto generated by Alembic - please adjust! ###
+    op.drop_table('book_genres')
+    op.drop_table('book_authors')
+    op.drop_index(op.f('ix_genres_name'), table_name='genres')
+    op.drop_table('genres')
+    op.drop_index(op.f('ix_books_year_published'), table_name='books')
+    op.drop_index(op.f('ix_books_title'), table_name='books')
+    op.drop_index(op.f('ix_books_language'), table_name='books')
+    op.drop_index(op.f('ix_books_isbn_13'), table_name='books')
+    op.drop_index(op.f('ix_books_isbn_10'), table_name='books')
+    op.drop_index(op.f('ix_books_average_rating'), table_name='books')
+    op.drop_table('books')
+    op.drop_index(op.f('ix_authors_name'), table_name='authors')
+    op.drop_table('authors')
+    # ### end Alembic commands ###
+
+
+
+
+================================================
+File: app/main.py
+================================================
+# app/main.py
+from fastapi import FastAPI
+from contextlib import asynccontextmanager
+from app.api.api_v1.router import api_router
+from app.core.config import settings
+from app.core.db import engine, Base # Import Base for metadata
+from app.core.es import check_and_create_es_index, close_es_client
+
+# Database initialization function (optional but good practice)
+async def init_db():
+    # This is more for dev/testing; use Alembic for production schema management
+    # async with engine.begin() as conn:
+        # await conn.run_sync(Base.metadata.drop_all) # Use with caution!
+        # await conn.run_sync(Base.metadata.create_all)
+    # print("Database tables checked/created.")
+    pass # Rely on Alembic
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup events
+    print("Starting up...")
+    # await init_db() # Initialize DB tables if needed (better to use migrations)
+    print("Checking Elasticsearch connection and index...")
+    await check_and_create_es_index() # Check/Create ES index on startup
+    yield
+    # Shutdown events
+    print("Shutting down...")
+    await close_es_client() # Close ES client gracefully
+    print("Shutdown complete.")
+
+
+app = FastAPI(
+    title=settings.PROJECT_NAME,
+    openapi_url=f"{settings.API_V1_STR}/openapi.json",
+    lifespan=lifespan # Use the new lifespan context manager
+)
+
+# Include the API router
+app.include_router(api_router, prefix=settings.API_V1_STR)
+
+@app.get("/", tags=["Root"])
+async def read_root():
+    return {"message": f"Welcome to the {settings.PROJECT_NAME}!"}
+
+# Optional: Add CORS middleware if frontend is on a different domain
+from fastapi.middleware.cors import CORSMiddleware
+
+origins = [
+    "http://localhost",
+    "http://localhost:3000", # Example frontend port
+    # Add your frontend deployment URL here
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+if __name__ == "__main__":
+    import uvicorn
+    # Run with: uvicorn app.main:app --reload --port 8000
+    # Ensure your PYTHONPATH includes the project root or run from the root directory
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
+
+
+
+================================================
+File: app/api/api_v1/router.py
+================================================
+# app/api/api_v1/router.py
+from fastapi import APIRouter
+from .endpoints import search, books, utils
+
+api_router = APIRouter()
+
+api_router.include_router(search.router, prefix="/search", tags=["Search"])
+api_router.include_router(books.router, prefix="/books", tags=["Books"])
+api_router.include_router(utils.router, prefix="/utils", tags=["Utilities"]) # Genres, Authors
+
+
+
+================================================
+File: app/api/api_v1/endpoints/books.py
+================================================
+# app/api/api_v1/endpoints/books.py
+from fastapi import APIRouter, HTTPException, Depends, Query, status
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.core.db import get_db
+from app.schemas.book import BookPublic, PaginatedResponse
+from app.services.search_service import search_books_in_es
+from typing import List, Optional
+import uuid
+
+router = APIRouter()
+
+@router.get("/", response_model=PaginatedResponse[BookPublic])
+async def get_books_from_search(
+    q: Optional[str] = Query(None, description="Search query string"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    sort_by: Optional[str] = Query("relevance", description="Sort criteria (e.g., relevance, rating_desc, year_asc, title_asc)"),
+    author: Optional[str] = Query(None, description="Filter by author name"),
+    genre: Optional[str] = Query(None, description="Filter by genre name"),
+    min_year: Optional[int] = Query(None, description="Filter by minimum publication year"),
+    max_year: Optional[int] = Query(None, description="Filter by maximum publication year"),
+    min_rating: Optional[float] = Query(None, description="Filter by minimum average rating"),
+    language: Optional[str] = Query(None, description="Filter by language"),
+    # db: AsyncSession = Depends(get_db) # Not needed if using ES primarily
+):
+    """
+    Retrieves a list of books based on search query, filters, and sorting
+    using the Elasticsearch index.
+    """
+    filters = {
+        "author": author,
+        "genre": genre,
+        "min_year": min_year,
+        "max_year": max_year,
+        "min_rating": min_rating,
+        "language": language,
+    }
+    # Remove None values from filters dict
+    active_filters = {k: v for k, v in filters.items() if v is not None}
+
+    results, total_hits = await search_books_in_es(
+        query=q,
+        filters=active_filters,
+        sort_by=sort_by,
+        page=page,
+        page_size=page_size
+    )
+
+    # Convert ES results (_source) to BookPublic schema
+    # Assuming the data stored in ES matches the BookPublic schema structure
+    # If not, you might need to fetch full data from DB based on IDs
+    public_results = [BookPublic(**result) for result in results]
+
+    return PaginatedResponse[BookPublic](
+        results=public_results,
+        total_hits=total_hits,
+        page=page,
+        page_size=page_size
+    )
+
+
+# Optional: Endpoint to get a single book by ID (from DB for full details)
+from app.crud import crud_book
+
+@router.get("/{book_id}", response_model=BookPublic)
+async def read_book(
+    book_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get a single book by its ID from the database.
+    """
+    db_book = await crud_book.get_book(db=db, book_id=book_id)
+    if db_book is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Book not found")
+    # Schema conversion handles related authors/genres automatically if loaded
+    return db_book
+
+
+================================================
+File: app/api/api_v1/endpoints/search.py
+================================================
+# app/api/api_v1/endpoints/search.py
+from fastapi import APIRouter, HTTPException, status, BackgroundTasks, Depends
+from app.schemas.genre import GenrePublic
+from app.schemas.author import AuthorPublic
+from app.schemas.book import SearchRequest, SearchResponse, BookPublic
+from app.schemas.common import PaginatedResponse
+from app.tasks.scrape import process_search_query
+from app.services.search_service import search_books_in_es
+from app.core.es import get_es_client # Dependency for ES client
+from elasticsearch import AsyncElasticsearch
+
+router = APIRouter()
+
+@router.post("/", response_model=SearchResponse, status_code=status.HTTP_202_ACCEPTED)
+async def initiate_search(
+    search_request: SearchRequest,
+    background_tasks: BackgroundTasks,
+    es_client: AsyncElasticsearch = Depends(get_es_client) # Inject ES client
+):
+    """
+    Accepts a search query, optionally returns immediate results from Elasticsearch,
+    and triggers a background task to fetch/update data from external sources.
+    """
+    print(f"Received search request: {search_request.query}")
+
+    # --- Option 1: Trigger background task immediately ---
+    # task = process_search_query.delay(search_request.query)
+    # message = "Search task accepted. Results will be updated in the background."
+    # return SearchResponse(task_id=task.id, message=message)
+
+    # --- Option 2: Perform initial ES search AND trigger background task ---
+    initial_results, total_hits = await search_books_in_es(
+        query=search_request.query,
+        page=search_request.page,
+        page_size=search_request.page_size,
+        # Add default sort if needed, e.g., sort_by="relevance"
+    )
+
+    # Trigger the background task to update/fetch new data
+    task = process_search_query.delay(search_request.query)
+    print(f"Dispatched background task {task.id} for query: {search_request.query}")
+
+    message = "Search task accepted. Returning initial results from existing data. Index will be updated in the background."
+
+    # Convert ES results (_source) to BookPublic schemas if needed
+    # Assuming _prepare_book_for_es stores data compatible with BookPublic
+    # You might need to fetch full data from DB if ES doc isn't sufficient
+    public_results = [
+        BookPublic(
+            **{k: v for k, v in result.items() if k not in ['authors', 'genres']},
+            authors=[AuthorPublic(**a) for a in result["authors"]],
+            genres=[GenrePublic(**g) for g in result["genres"]]
+        )
+        for result in initial_results
+    ]
+
+    return SearchResponse(
+        task_id=task.id,
+        message=message,
+        initial_results=public_results,
+        total_hits=total_hits
+    )
+
+
+================================================
+File: app/api/api_v1/endpoints/utils.py
+================================================
+# app/api/api_v1/endpoints/utils.py
+from fastapi import APIRouter, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.core.db import get_db
+from app.schemas.genre import GenrePublic
+from app.schemas.author import AuthorPublic
+from app.crud import crud_genre, crud_author
+from typing import List
+
+router = APIRouter()
+
+@router.get("/genres", response_model=List[GenrePublic])
+async def get_all_genres(
+    skip: int = 0,
+    limit: int = 100,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Retrieve a list of all unique genres.
+    """
+    genres = await crud_genre.get_genres(db, skip=skip, limit=limit)
+    return genres
+
+
+@router.get("/authors", response_model=List[AuthorPublic])
+async def get_all_authors(
+    skip: int = 0,
+    limit: int = 100,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Retrieve a list of all unique authors.
+    """
+    authors = await crud_author.get_authors(db, skip=skip, limit=limit)
+    return authors
+
+
+
+================================================
+File: app/core/celery_app.py
+================================================
+# app/core/celery_app.py
+from celery import Celery
+from .config import settings
+
+# Explicitly use the app name as the main module name
+celery_app = Celery(
+    "book_search_tasks",
+    broker=settings.CELERY_BROKER_URL,
+    backend=settings.CELERY_RESULT_BACKEND,
+    include=["app.tasks.scrape"],
+    task_serializer='pickle',  # Changed from json
+    result_serializer='pickle',
+    event_serializer='json',
+    accept_content=['pickle', 'json'],
+)
+
+celery_app.conf.update(
+    task_serializer="json",
+    accept_content=["json"],
+    result_serializer="json",
+    timezone="UTC",
+    enable_utc=True,
+    broker_connection_max_retries=10,
+    task_default_retry_delay=30,
+    result_extended=True,
+    task_track_started=True,
+    worker_proc_alive_timeout=30,
+    broker_connection_retry_on_startup=True,
+)
+
+# If you want Celery to automatically discover tasks in the included modules:
+# celery_app.autodiscover_tasks(lambda: ["app.tasks"]) # Requires specific structure
+
+
+================================================
+File: app/core/config.py
+================================================
+# app/core/config.py
+import os
+from pydantic_settings import BaseSettings
+from functools import lru_cache
+from dotenv import load_dotenv
+
+# Load .env file if it exists (especially for local development)
+load_dotenv()
+
+class Settings(BaseSettings):
+    PROJECT_NAME: str = "Book Search Service"
+    API_V1_STR: str = "/api/v1"
+
+    # Database Config
+    DATABASE_URL: str = os.getenv("DATABASE_URL", "postgresql+asyncpg://user:password@localhost:5432/bookdb")
+    # Sync URL needed for Alembic
+    SYNC_DATABASE_URL: str = os.getenv("SYNC_DATABASE_URL", "postgresql://user:password@localhost:5432/bookdb")
+
+
+    # Elasticsearch Config
+    ELASTICSEARCH_URL: str = os.getenv("ELASTICSEARCH_URL", "http://localhost:9200")
+    ELASTICSEARCH_USERNAME: str | None = os.getenv("ELASTICSEARCH_USERNAME")
+    ELASTICSEARCH_PASSWORD: str | None = os.getenv("ELASTICSEARCH_PASSWORD")
+    ELASTICSEARCH_INDEX_NAME: str = "books_index"
+
+    # Celery Config
+    CELERY_BROKER_URL: str = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
+    CELERY_RESULT_BACKEND: str = os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/1")
+
+    # Add other settings as needed
+
+    class Config:
+        case_sensitive = True
+        # If using a .env file:
+        # env_file = ".env"
+        # env_file_encoding = 'utf-8'
+
+@lru_cache()
+def get_settings() -> Settings:
+    return Settings()
+
+settings = get_settings()
+
+
+================================================
+File: app/core/db.py
+================================================
+# app/core/db.py
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from sqlalchemy.orm import declarative_base
+from sqlalchemy import Column, DateTime, func
+import uuid
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+
+from .config import settings
+
+# Create async engine instance
+engine = create_async_engine(settings.DATABASE_URL, echo=False, future=True)
+
+# Create sessionmaker
+AsyncSessionLocal = async_sessionmaker(
+    bind=engine,
+    class_=AsyncSession,
+    expire_on_commit=False,
+    autoflush=False,
+    autocommit=False
+)
+from sqlalchemy import Column, DateTime, func
+import uuid
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from sqlalchemy.ext.declarative import declarative_base
+
+class BaseMixin:
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+Base = declarative_base(cls=BaseMixin)
+
+
+# Dependency to get DB session
+async def get_db() -> AsyncSession:
+    async with AsyncSessionLocal() as session:
+        try:
+            yield session
+            await session.commit() # Commit session if no exceptions occurred
+        except Exception:
+            await session.rollback() # Rollback on error
+            raise
+        finally:
+            await session.close()
+
+# --- Sync engine for Alembic ---
+# Alembic needs a sync engine to work properly
+# You might not need this if your migrations don't involve complex data operations
+from sqlalchemy import create_engine
+sync_engine = create_engine(settings.SYNC_DATABASE_URL, echo=False)
+
+
+================================================
+File: app/core/es.py
+================================================
+# app/core/es.py
+from elasticsearch import AsyncElasticsearch
+from .config import settings
+from functools import lru_cache
+
+@lru_cache()
+def get_es_client() -> AsyncElasticsearch:
+    return AsyncElasticsearch(
+        hosts=[settings.ELASTICSEARCH_URL],
+        retry_on_timeout=True,
+        verify_certs=False,
+        max_retries=10,
+        request_timeout=30
+    )
+
+async def close_es_client():
+    client = get_es_client()
+    await client.close()
+
+# Example function to check connection and create index if not exists
+async def check_and_create_es_index():
+    client = get_es_client()
+    index_name = settings.ELASTICSEARCH_INDEX_NAME
+    try:
+        if not await client.ping():
+            raise ConnectionError("Elasticsearch connection failed")
+
+        if not await client.indices.exists(index=index_name):
+            print(f"Creating Elasticsearch index: {index_name}")
+            # Define your index mapping here (adjust as needed)
+            # This is crucial for defining data types and analyzers for search
+            mapping = {
+                "properties": {
+                    "id": {"type": "keyword"},
+                    "title": {"type": "text", "analyzer": "standard"},
+                    "title_sort": {"type": "keyword"},
+                    "year_published": {"type": "integer"},
+                    "summary": {"type": "text", "analyzer": "standard"},
+                    "age_rating": {"type": "keyword"},
+                    "language": {"type": "keyword"},
+                    "book_size_pages": {"type": "integer"},
+                    "average_rating": {"type": "float"},
+                    "isbn_13": {"type": "keyword"},
+                    "authors": {
+                        "type": "nested",
+                        "properties": {
+                            "id": {"type": "keyword"},
+                            "name": {"type": "text"}
+                        }
+                    },
+                    "genres": {
+                        "type": "nested", 
+                        "properties": {
+                            "id": {"type": "keyword"},
+                            "name": {"type": "text"}
+                        }
+                    },
+                    "search_text": {"type": "text", "analyzer": "standard"} # Consolidated field
+                }
+            }
+            await client.indices.create(index=index_name, mappings=mapping)
+            print(f"Index {index_name} created.")
+        else:
+             print(f"Elasticsearch index {index_name} already exists.")
+
+    except Exception as e:
+        print(f"Error connecting to or setting up Elasticsearch: {e}")
+        # Decide how to handle this - maybe raise the exception to stop startup
+
+
+
+================================================
+File: app/crud/crud_author.py
+================================================
+# app/crud/crud_author.py
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
+from sqlalchemy.orm import selectinload
+from app.models.author import Author
+from app.schemas.author import AuthorCreate
+import uuid
+from typing import List, Optional
+
+async def get_author(db: AsyncSession, author_id: uuid.UUID) -> Optional[Author]:
+    result = await db.execute(select(Author).where(Author.id == author_id))
+    return result.scalars().first()
+
+async def get_author_by_name(db: AsyncSession, name: str) -> Optional[Author]:
+    result = await db.execute(select(Author).where(Author.name == name))
+    return result.scalars().first()
+
+async def get_or_create_author(db: AsyncSession, name: str) -> Author:
+    author = await get_author_by_name(db, name)
+    if not author:
+        author = Author(name=name)
+        db.add(author)
+        await db.flush() # Flush to get the ID if needed before commit
+        await db.refresh(author)
+    return author
+
+async def get_authors(db: AsyncSession, skip: int = 0, limit: int = 100) -> List[Author]:
+    result = await db.execute(select(Author).offset(skip).limit(limit))
+    return result.scalars().all()
+
+async def create_author(db: AsyncSession, author: AuthorCreate) -> Author:
+    db_author = Author(name=author.name)
+    db.add(db_author)
+    await db.flush()
+    await db.refresh(db_author)
+    return db_author
+
+
+================================================
+File: app/crud/crud_book.py
+================================================
+# app/crud/crud_book.py
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
+from sqlalchemy.orm import selectinload, joinedload
+from app.models.book import Book
+from app.models.author import Author
+from app.models.genre import Genre
+from app.schemas.book import BookCreate, BookUpdate
+from .crud_author import get_author, get_or_create_author
+from .crud_genre import get_genre, get_or_create_genre
+import uuid
+from typing import List, Optional
+
+# Helper to load relationships
+def _get_book_query_with_relationships():
+    return select(Book).options(
+        selectinload(Book.authors),
+        selectinload(Book.genres)
+    )
+
+async def get_book(db: AsyncSession, book_id: uuid.UUID) -> Optional[Book]:
+    result = await db.execute(
+        _get_book_query_with_relationships().where(Book.id == book_id)
+    )
+    return result.scalars().first()
+
+async def get_book_by_isbn13(db: AsyncSession, isbn13: str) -> Optional[Book]:
+    if not isbn13: return None
+    result = await db.execute(
+        _get_book_query_with_relationships().where(Book.isbn_13 == isbn13)
+    )
+    return result.scalars().first()
+
+# Note: This function is simplified. A real implementation would need
+# more sophisticated matching (fuzzy title/author, year proximity etc.)
+# if ISBN is not available.
+async def find_existing_book(db: AsyncSession, book_data: BookCreate) -> Optional[Book]:
+    # Prioritize ISBN lookup
+    if book_data.isbn_13:
+        existing = await get_book_by_isbn13(db, book_data.isbn_13)
+        if existing:
+            return existing
+
+    # Basic title/first author match as fallback (can be unreliable)
+    if book_data.title and book_data.author_names:
+         first_author_name = book_data.author_names[0]
+         stmt = _get_book_query_with_relationships().join(Book.authors).where(
+             Book.title == book_data.title,
+             Author.name == first_author_name
+         )
+         # Add year proximity check if available
+         if book_data.year_published:
+             stmt = stmt.where(Book.year_published.between(
+                 book_data.year_published - 1, book_data.year_published + 1)
+             )
+         result = await db.execute(stmt)
+         return result.scalars().first() # Might return multiple, take first for simplicity
+
+    return None
+
+
+async def create_book(db: AsyncSession, book: BookCreate) -> Book:
+    db_book = Book(**book.model_dump(exclude={'author_ids', 'genre_ids', 'author_names', 'genre_names'}))
+
+    # Handle Authors
+    db_book.authors = []
+    if book.author_ids:
+        for author_id in book.author_ids:
+            author = await get_author(db, author_id)
+            if author:
+                db_book.authors.append(author)
+    elif book.author_names:
+        for name in book.author_names:
+            author = await get_or_create_author(db, name)
+            db_book.authors.append(author)
+
+    # Handle Genres
+    db_book.genres = []
+    if book.genre_ids:
+        for genre_id in book.genre_ids:
+            genre = await get_genre(db, genre_id)
+            if genre:
+                db_book.genres.append(genre)
+    elif book.genre_names:
+        for name in book.genre_names:
+            genre = await get_or_create_genre(db, name)
+            db_book.genres.append(genre)
+
+    db.add(db_book)
+    await db.flush()
+    await db.refresh(db_book, attribute_names=['authors', 'genres']) # Refresh to load relationships fully
+    return db_book
+
+async def update_book(db: AsyncSession, db_book: Book, book_in: BookUpdate) -> Book:
+    update_data = book_in.model_dump(exclude_unset=True)
+
+    for key, value in update_data.items():
+         # Handle relationships separately if IDs are provided
+        if key not in ['author_ids', 'genre_ids']:
+             setattr(db_book, key, value)
+
+    # Update relationships if IDs are provided in the update payload
+    if book_in.author_ids is not None:
+        db_book.authors = []
+        for author_id in book_in.author_ids:
+            author = await get_author(db, author_id)
+            if author:
+                db_book.authors.append(author)
+
+    if book_in.genre_ids is not None:
+        db_book.genres = []
+        for genre_id in book_in.genre_ids:
+            genre = await get_genre(db, genre_id)
+            if genre:
+                db_book.genres.append(genre)
+
+    db.add(db_book)
+    await db.flush()
+    await db.refresh(db_book, attribute_names=['authors', 'genres'])
+    return db_book
+
+async def get_books(db: AsyncSession, skip: int = 0, limit: int = 100) -> List[Book]:
+    # Basic retrieval, not using ES here. ES is used for the main search/filter endpoint.
+    result = await db.execute(
+        _get_book_query_with_relationships().offset(skip).limit(limit)
+    )
+    return result.scalars().unique().all() # .unique() needed with selectinload
+
+
+================================================
+File: app/crud/crud_genre.py
+================================================
+# app/crud/crud_genre.py
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
+from app.models.genre import Genre
+from app.schemas.genre import GenreCreate
+import uuid
+from typing import List, Optional
+
+async def get_genre(db: AsyncSession, genre_id: uuid.UUID) -> Optional[Genre]:
+    result = await db.execute(select(Genre).where(Genre.id == genre_id))
+    return result.scalars().first()
+
+async def get_genre_by_name(db: AsyncSession, name: str) -> Optional[Genre]:
+    result = await db.execute(select(Genre).where(Genre.name == name))
+    return result.scalars().first()
+
+async def get_or_create_genre(db: AsyncSession, name: str) -> Genre:
+    genre = await get_genre_by_name(db, name)
+    if not genre:
+        genre = Genre(name=name)
+        db.add(genre)
+        await db.flush()
+        await db.refresh(genre)
+    return genre
+
+async def get_genres(db: AsyncSession, skip: int = 0, limit: int = 100) -> List[Genre]:
+    result = await db.execute(select(Genre).offset(skip).limit(limit))
+    return result.scalars().all()
+
+async def create_genre(db: AsyncSession, genre: GenreCreate) -> Genre:
+    db_genre = Genre(name=genre.name)
+    db.add(db_genre)
+    await db.flush()
+    await db.refresh(db_genre)
+    return db_genre
+
+
+
+================================================
+File: app/models/association.py
+================================================
+# app/models/association.py
+from sqlalchemy import Column, Table, ForeignKey
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from app.core.db import Base
+
+book_authors_association = Table(
+    'book_authors', Base.metadata,
+    Column('book_id', PG_UUID(as_uuid=True), ForeignKey('books.id'), primary_key=True),
+    Column('author_id', PG_UUID(as_uuid=True), ForeignKey('authors.id'), primary_key=True)
+)
+
+book_genres_association = Table(
+    'book_genres', Base.metadata,
+    Column('book_id', PG_UUID(as_uuid=True), ForeignKey('books.id'), primary_key=True),
+    Column('genre_id', PG_UUID(as_uuid=True), ForeignKey('genres.id'), primary_key=True)
+)
+
+
+================================================
+File: app/models/author.py
+================================================
+from sqlalchemy import Column, String  # Add missing imports
+from sqlalchemy.orm import relationship
+from app.core.db import Base
+from app.models.association import book_authors_association
+
+class Author(Base):
+    __tablename__ = "authors"
+    name = Column(String, unique=True, index=True, nullable=False)  # Now Column is defined
+
+    books = relationship(
+        "Book",
+        secondary=book_authors_association,
+        back_populates="authors"
+    )
+
+    def __repr__(self):
+        return f"<Author(id={self.id}, name='{self.name}')>"
+
+
+================================================
+File: app/models/base.py
+================================================
+# app/models/base.py
+# Base class is defined in app/core/db.py
+from app.core.db import Base
+
+
+================================================
+File: app/models/book.py
+================================================
+# app/models/book.py
+from sqlalchemy import Column, Table, ForeignKey, String, Integer, Text, Float  # Add missing imports
+from sqlalchemy.orm import relationship
+from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
+from app.core.db import Base
+from app.models.association import (
+    book_authors_association,
+    book_genres_association
+)
+
+# Association table for Many-to-Many relationship between Books and Authors
+book_authors_association = Table(
+    'book_authors', Base.metadata,
+    Column('book_id', PG_UUID(as_uuid=True), ForeignKey('books.id'), primary_key=True),
+    Column('author_id', PG_UUID(as_uuid=True), ForeignKey('authors.id'), primary_key=True)
+    ,extend_existing=True
+)
+
+# Association table for Many-to-Many relationship between Books and Genres
+book_genres_association = Table(
+    'book_genres', Base.metadata,
+    Column('book_id', PG_UUID(as_uuid=True), ForeignKey('books.id'), primary_key=True),
+    Column('genre_id', PG_UUID(as_uuid=True), ForeignKey('genres.id'), primary_key=True)
+    ,extend_existing=True
+)
+
+
+class Book(Base):
+    __tablename__ = "books"
+
+    title = Column(String, index=True, nullable=False)
+    year_published = Column(Integer, index=True, nullable=True)
+    summary = Column(Text, nullable=True)
+    age_rating = Column(String, nullable=True)
+    language = Column(String, index=True, nullable=True)
+    book_size_pages = Column(Integer, nullable=True)
+    book_size_description = Column(String, nullable=True)
+    average_rating = Column(Float, index=True, nullable=True)
+    rating_details = Column(JSONB, nullable=True) # e.g., [{"source": "GoodReads", "rating": 4.5, "votes": 150}]
+    source_url = Column(String, nullable=True)
+    isbn_10 = Column(String(10), index=True, nullable=True)
+    isbn_13 = Column(String(13), unique=True, index=True, nullable=True)
+
+    # Relationships
+    authors = relationship(
+        "Author",
+        secondary=book_authors_association,
+        back_populates="books",
+        lazy="selectin" # Use selectin loading for async many-to-many
+    )
+    genres = relationship(
+        "Genre",
+        secondary=book_genres_association,
+        back_populates="books",
+        lazy="selectin" # Use selectin loading for async many-to-many
+    )
+
+    def __repr__(self):
+        return f"<Book(id={self.id}, title='{self.title}')>"
+
+
+================================================
+File: app/models/genre.py
+================================================
+
+from sqlalchemy import Column, String  # Add this
+from sqlalchemy.orm import relationship
+from app.core.db import Base
+from app.models.association import book_genres_association
+
+class Genre(Base):
+    __tablename__ = "genres"
+    name = Column(String, unique=True, index=True, nullable=False)
+
+    # Relationship to books (many-to-many)
+    books = relationship(
+        "Book",
+        secondary=book_genres_association,
+        back_populates="genres"
+    )
+
+    def __repr__(self):
+        return f"<Genre(id={self.id}, name='{self.name}')>"
+
+
+
+================================================
+File: app/schemas/author.py
+================================================
+# app/schemas/author.py
+from pydantic import BaseModel, Field
+from .common import BaseSchema, UUIDSchema
+
+class AuthorBase(BaseSchema):
+    name: str = Field(..., min_length=1, max_length=255)
+
+class AuthorCreate(AuthorBase):
+    pass
+
+class Author(AuthorBase, UUIDSchema):
+    pass # Inherits id and name
+
+class AuthorPublic(AuthorBase, UUIDSchema):
+    # Example if you wanted to exclude fields later
+    pass
+
+
+================================================
+File: app/schemas/book.py
+================================================
+# app/schemas/book.py
+from pydantic import BaseModel, Field, validator
+from typing import List, Optional, Any, Dict
+import uuid
+from .common import BaseSchema, UUIDSchema, PaginatedResponse
+from .author import AuthorPublic
+from .genre import GenrePublic
+
+class BookBase(BaseSchema):
+    title: str = Field(..., min_length=1, max_length=500)
+    year_published: Optional[int] = Field(None, ge=0, le=3000) # Example range
+    summary: Optional[str] = None
+    age_rating: Optional[str] = Field(None, max_length=50)
+    language: Optional[str] = Field(None, max_length=50)
+    book_size_pages: Optional[int] = Field(None, ge=0)
+    book_size_description: Optional[str] = Field(None, max_length=100)
+    average_rating: Optional[float] = Field(None, ge=0, le=10) # Assuming a 0-10 scale, adjust if needed
+    rating_details: Optional[List[Dict[str, Any]]] = None # e.g., [{"source": "GoodReads", "rating": 4.5}]
+    source_url: Optional[str] = Field(None, max_length=2048)
+    isbn_10: Optional[str] = Field(None, min_length=10, max_length=10)
+    isbn_13: Optional[str] = Field(None, min_length=13, max_length=13)
+
+
+class BookCreate(BookBase):
+    # When creating, we might link by ID or create nested authors/genres
+    author_ids: Optional[List[uuid.UUID]] = None
+    genre_ids: Optional[List[uuid.UUID]] = None
+    # Or allow creating authors/genres by name if they don't exist
+    author_names: Optional[List[str]] = None
+    genre_names: Optional[List[str]] = None
+
+class BookUpdate(BookBase):
+    # Allow partial updates
+    title: Optional[str] = Field(None, min_length=1, max_length=500)
+    # Allow setting related IDs during update
+    author_ids: Optional[List[uuid.UUID]] = None
+    genre_ids: Optional[List[uuid.UUID]] = None
+
+
+class Book(BookBase, UUIDSchema):
+    # Full book representation including related objects
+    authors: List[AuthorPublic] = []
+    genres: List[GenrePublic] = []
+
+
+class BookPublic(BookBase, UUIDSchema):
+    # Schema for public API responses
+    authors: List[AuthorPublic] = []
+    genres: List[GenrePublic] = []
+
+# Schema for the search request body
+class SearchRequest(BaseModel):
+    query: str = Field(..., description="Search query string (e.g., author, title, description)")
+    page: int = Field(1, ge=1)
+    page_size: int = Field(20, ge=1, le=100)
+
+# Schema for the initial search response (includes task ID)
+class SearchResponse(BaseModel):
+    task_id: Optional[str] = None
+    message: str
+    initial_results: Optional[List[BookPublic]] = None # Add this if you return initial results immediately
+    total_hits: Optional[int] = None
+
+
+================================================
+File: app/schemas/common.py
+================================================
+# app/schemas/common.py
+from pydantic import BaseModel, Field
+from typing import List, TypeVar, Generic
+import uuid
+
+T = TypeVar('T')
+
+class PaginatedResponse(BaseModel, Generic[T]):
+    results: List[T]
+    total_hits: int
+    page: int
+    page_size: int
+
+class BaseSchema(BaseModel):
+    class Config:
+        from_attributes = True # Changed from orm_mode in Pydantic v2
+
+class UUIDSchema(BaseModel):
+    id: uuid.UUID
+
+
+================================================
+File: app/schemas/genre.py
+================================================
+# app/schemas/genre.py
+from pydantic import BaseModel, Field
+from .common import BaseSchema, UUIDSchema
+
+class GenreBase(BaseSchema):
+    name: str = Field(..., min_length=1, max_length=100)
+
+class GenreCreate(GenreBase):
+    pass
+
+class Genre(GenreBase, UUIDSchema):
+    pass
+
+class GenrePublic(GenreBase, UUIDSchema):
+    pass
+
+
+
+================================================
+File: app/services/search_service.py
+================================================
+# app/services/search_service.py
+from elasticsearch import AsyncElasticsearch, NotFoundError
+from elasticsearch.helpers import async_bulk
+from app.core.config import settings
+from app.core.es import get_es_client
+from app.schemas.book import Book as BookSchema # Use Pydantic model for structure
+from app.models.book import Book as BookModel # Use DB model for input data type hint
+from typing import List, Dict, Any, Tuple
+
+def _prepare_book_for_es(book: BookModel) -> Dict[str, Any]:
+    """Converts a SQLAlchemy Book model to an Elasticsearch document dict."""
+    # Store authors/genres as objects with IDs and names
+    authors = [{"id": str(a.id), "name": a.name} for a in book.authors]
+    genres = [{"id": str(g.id), "name": g.name} for g in book.genres]
+
+    # Create consolidated text field
+    search_text_parts = [book.title or ""]
+    search_text_parts.extend(a["name"] for a in authors)
+    search_text_parts.extend(g["name"] for g in genres)
+    search_text_parts.append(book.summary or "")
+    search_text = " ".join(filter(None, search_text_parts))
+
+    # Prepare title_sort (simple example: remove leading articles)
+    title_sort = book.title.lower()
+    for article in ["the ", "a ", "an "]:
+        if title_sort.startswith(article):
+            title_sort = title_sort[len(article):]
+            break
+
+    doc = {
+        "id": str(book.id), # Use string representation of UUID
+        "title": book.title,
+        "title_sort": title_sort,
+        "authors": authors,
+        "year_published": book.year_published,
+        "genres": genres,
+        "summary": book.summary,
+        "age_rating": book.age_rating,
+        "language": book.language,
+        "book_size_pages": book.book_size_pages,
+        "average_rating": book.average_rating,
+        "isbn_13": book.isbn_13,
+        "search_text": search_text
+    }
+    # Remove None values to keep ES doc clean
+    return {k: v for k, v in doc.items() if v is not None}
+
+
+async def index_book(book: BookModel):
+    """Indexes or updates a single book in Elasticsearch."""
+    client = get_es_client()
+    index_name = settings.ELASTICSEARCH_INDEX_NAME
+    doc_id = str(book.id)
+    document = _prepare_book_for_es(book)
+
+    try:
+        await client.index(index=index_name, id=doc_id, document=document)
+        print(f"Indexed book {doc_id} ({book.title})")
+    except Exception as e:
+        print(f"Error indexing book {doc_id}: {e}")
+
+
+async def bulk_index_books(books: List[BookModel]):
+    """Indexes a list of books using Elasticsearch bulk API."""
+    client = get_es_client()
+    index_name = settings.ELASTICSEARCH_INDEX_NAME
+
+    actions = [
+        {
+            "_op_type": "index", # or "update" if you want partial updates
+            "_index": index_name,
+            "_id": str(book.id),
+            "_source": _prepare_book_for_es(book)
+        }
+        for book in books
+    ]
+
+    if not actions:
+        return
+
+    try:
+        success, failed = await async_bulk(client, actions, raise_on_error=False, raise_on_exception=False)
+        print(f"Bulk indexed {success} books.")
+        if failed:
+            print(f"Failed to index {len(failed)} books: {failed[:5]}...") # Log first few failures
+    except Exception as e:
+        print(f"Error during bulk indexing: {e}")
+
+
+async def delete_book_from_index(book_id: str):
+     """Deletes a book from the Elasticsearch index."""
+     client = get_es_client()
+     index_name = settings.ELASTICSEARCH_INDEX_NAME
+     try:
+         await client.delete(index=index_name, id=book_id)
+         print(f"Deleted book {book_id} from index")
+     except NotFoundError:
+          print(f"Book {book_id} not found in index for deletion.")
+     except Exception as e:
+         print(f"Error deleting book {book_id} from index: {e}")
+
+
+async def search_books_in_es(
+    query: str | None = None,
+    filters: Dict[str, Any] | None = None,
+    sort_by: str | None = None,
+    page: int = 1,
+    page_size: int = 20
+) -> Tuple[List[Dict[str, Any]], int]:
+    """Performs search and filtering in Elasticsearch."""
+    client = get_es_client()
+    index_name = settings.ELASTICSEARCH_INDEX_NAME
+    es_query: Dict[str, Any] = {"bool": {"must": [], "filter": []}}
+    sort_criteria: List[Any] = []
+
+    # 1. Add search query (if provided)
+    if query:
+        es_query["bool"]["must"].append({
+            "query_string": {
+                "query": query,
+                # Boost title and authors for relevance
+                "fields": ["title^3", "authors^2", "summary", "search_text", "genres"],
+                "default_operator": "AND" # More precise matching
+            }
+        })
+    else:
+         # If no query, match all documents
+         es_query["bool"]["must"].append({"match_all": {}})
+
+
+    # 2. Add filters
+    if filters:
+        for field, value in filters.items():
+            if value is None: continue # Skip None filters
+
+            # Handle specific filter types
+            if field == "min_year" and isinstance(value, int):
+                es_query["bool"]["filter"].append({"range": {"year_published": {"gte": value}}})
+            elif field == "max_year" and isinstance(value, int):
+                 es_query["bool"]["filter"].append({"range": {"year_published": {"lte": value}}})
+            elif field == "min_rating" and isinstance(value, (int, float)):
+                 es_query["bool"]["filter"].append({"range": {"average_rating": {"gte": value}}})
+            elif field in ["genre", "language", "author", "age_rating"]: # Keyword fields
+                 # Use 'term' for exact match on keyword fields
+                 # Adjust field name if necessary (e.g., search 'authors' field for author filter)
+                 es_field = "genres" if field == "genre" else \
+                            "authors" if field == "author" else \
+                            field
+                 es_query["bool"]["filter"].append({"term": {es_field: value}})
+            # Add more specific filter handlers here as needed
+
+    # If no filters were added, ensure the filter list isn't empty for ES
+    if not es_query["bool"]["filter"]:
+        del es_query["bool"]["filter"] # Remove empty filter clause
+
+
+    # 3. Add sorting
+    if sort_by and sort_by != "relevance":
+        field_map = {
+            "rating": "average_rating",
+            "year": "year_published",
+            "size": "book_size_pages",
+            "title": "title_sort", # Use the keyword field for sorting title
+        }
+        order = "desc"
+        sort_field = sort_by
+        if sort_by.endswith("_asc"):
+            order = "asc"
+            sort_field = sort_by[:-4]
+        elif sort_by.endswith("_desc"):
+            order = "desc"
+            sort_field = sort_by[:-5]
+
+        es_sort_field = field_map.get(sort_field)
+        if es_sort_field:
+            sort_criteria.append({es_sort_field: {"order": order, "missing": "_last"}}) # Handle missing values
+
+    # Default sort by relevance (_score) if no other sort is specified or if sort is explicitly 'relevance'
+    # You might want _score as a secondary sort even when sorting by another field
+    sort_criteria.append({"_score": {"order": "desc"}})
+
+    # 4. Execute Search
+    try:
+        response = await client.search(
+            index=index_name,
+            query=es_query,
+            sort=sort_criteria,
+            from_=(page - 1) * page_size,
+            size=page_size,
+            track_total_hits=True # Get accurate total count
+        )
+
+        hits = response['hits']['hits']
+        total_hits = response['hits']['total']['value']
+        results = [hit['_source'] for hit in hits] # Return the source document
+        return results, total_hits
+
+    except Exception as e:
+        print(f"Error searching Elasticsearch: {e}")
+        # In a real app, log this error properly
+        return [], 0
+
+
+
+================================================
+File: app/tasks/scrape.py
+================================================
+# app/tasks/scrape.py
+import time
+import random
+from app.core.celery_app import celery_app
+# Import necessary CRUD operations and models when implementing
+from app.core.db import AsyncSessionLocal # Need to create a session within the task
+from app.crud.crud_book import find_existing_book, create_book, update_book
+from app.schemas.book import BookCreate # Use schema for structure
+from app.services.search_service import index_book # To index after DB save/update
+# from app.models.book import Book as BookModel # For type hints
+
+
+@celery_app.task(bind=True, max_retries=3, default_retry_delay=60) # `bind=True` gives access to `self`
+async def process_search_query(self, query: str):
+    """
+    Celery task to fetch book data from external sources based on a query.
+    This function needs to be async if database operations inside are async.
+    """
+    print(f"Received task to process query: {query}")
+    # TODO: Implement actual scraping logic here.
+    # This involves:
+    # 1. Identifying target sources (Wikipedia, Litres, Google Books API, OpenLibrary API, etc.)
+    # 2. Making HTTP requests to these sources (respecting robots.txt, rate limits)
+    #    - Use libraries like `httpx` for async requests.
+    # 3. Parsing the responses (HTML parsing with BeautifulSoup, JSON parsing)
+    # 4. Extracting book details (title, author, year, summary, ISBN, rating, etc.)
+    # 5. Normalizing the extracted data (standardize formats).
+
+    # --- Placeholder Example ---
+    print("Simulating external data fetching...")
+    await asyncio.sleep(random.uniform(3, 8)) # Simulate network latency/work
+
+    # --- Example: Create a fake book result based on the query ---
+    # This is where you'd process the *actual* results from scraping/APIs
+    fake_results = []
+    if "tolkien" in query.lower() or "hobbit" in query.lower():
+        fake_results.append(BookCreate(
+            title="The Hobbit",
+            author_names=["J.R.R. Tolkien"],
+            genre_names=["Fantasy", "Adventure"],
+            year_published=1937,
+            summary="Bilbo Baggins's journey with dwarves.",
+            isbn_13="9780547928227",
+            average_rating=4.8,
+            language="English"
+        ))
+    elif "dune" in query.lower():
+         fake_results.append(BookCreate(
+            title="Dune",
+            author_names=["Frank Herbert"],
+            genre_names=["Science Fiction"],
+            year_published=1965,
+            summary="Paul Atreides on the desert planet Arrakis.",
+            isbn_13="9780441172719",
+            average_rating=4.5,
+            language="English"
+        ))
+    else:
+        print(f"No specific fake data rule for query: {query}")
+        # Optionally create a generic result or do nothing
+        fake_results.append(BookCreate(
+            title=f"Book about {query.split()[0]}" if query else "Some Random Book",
+            author_names=[f"Author {random.randint(1,100)}"],
+            genre_names=["Fiction"],
+            year_published=random.randint(1950, 2024),
+            summary=f"A summary related to {query}.",
+            isbn_13=f"978{random.randint(1000000000, 9999999999)}", # Fake ISBN
+            average_rating=round(random.uniform(3.0, 5.0), 1)
+        ))
+
+    print(f"Simulated fetching {len(fake_results)} results for query: {query}")
+
+    # --- Database Interaction ---
+    # Use AsyncSessionLocal to create a new session within the task
+    async with AsyncSessionLocal() as db:
+        processed_count = 0
+        for book_data in fake_results:
+            try:
+                # Check if book exists (using ISBN or title/author match)
+                existing_book = await find_existing_book(db, book_data) # find_existing_book needs implementation
+
+                if existing_book:
+                    print(f"Updating existing book: {existing_book.title} ({existing_book.id})")
+                    # Create an update schema from the new data
+                    update_data = BookUpdate(**book_data.model_dump(exclude_unset=True))
+                    updated_book = await update_book(db, existing_book, update_data)
+                    await index_book(updated_book) # Update ES index
+                else:
+                    print(f"Creating new book: {book_data.title}")
+                    new_book = await create_book(db, book_data)
+                    await index_book(new_book) # Index new book in ES
+
+                processed_count += 1
+
+            except Exception as e:
+                print(f"Error processing book data '{book_data.title}': {e}")
+                # Optional: Retry logic within the loop or log failures specifically
+                # Be cautious about retrying the whole task if only one item fails repeatedly.
+                # self.retry(exc=e) # Use Celery's retry mechanism if the whole task should retry
+
+        await db.commit() # Commit all changes for this task execution
+
+    print(f"Finished processing task for query: {query}. Processed {processed_count} results.")
+    return {"query": query, "status": "completed", "processed_count": processed_count}
+
+
+# Import asyncio at the top if not already imported
+import asyncio
+
+
+
+================================================
+File: scripts/generate_data.py
+================================================
+# scripts/generate_data.py
+import sys
+from pathlib import Path
+
+# Add project root to Python path
+sys.path.append(str(Path(__file__).parent.parent))
+import asyncio
+import random
+import uuid
+from faker import Faker
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from sqlalchemy.future import select
+
+# Adjust imports based on your final project structure
+from app.core.config import settings
+from app.models.book import Book
+from app.models.author import Author
+from app.models.genre import Genre
+from app.crud.crud_book import create_book
+from app.crud.crud_author import get_or_create_author
+from app.crud.crud_genre import get_or_create_genre
+from app.schemas.book import BookCreate
+from app.services.search_service import bulk_index_books # Use bulk indexing
+
+fake = Faker()
+
+# Use the database URL from settings
+DATABASE_URL = settings.DATABASE_URL
+
+# Setup async engine and session
+engine = create_async_engine(DATABASE_URL, echo=False)
+AsyncSessionLocal = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
+
+async def generate_authors(db: AsyncSession, count: int) -> list[Author]:
+    authors = []
+    print(f"Generating {count} authors...")
+    for _ in range(count):
+        name = fake.name()
+        # Avoid creating duplicates during generation if possible
+        result = await db.execute(select(Author).where(Author.name == name))
+        existing = result.scalars().first()
+        if not existing:
+            author = Author(name=name)
+            db.add(author)
+            authors.append(author)
+    await db.flush() # Flush to get IDs assigned
+    print(f"Generated {len(authors)} unique authors.")
+    # Fetch all authors now including pre-existing ones potentially
+    all_authors_result = await db.execute(select(Author))
+    return all_authors_result.scalars().all()
+
+
+async def generate_genres(db: AsyncSession, genres_list: list[str]) -> list[Genre]:
+    genres = []
+    print(f"Generating/Fetching {len(genres_list)} genres...")
+    for name in genres_list:
+         # Avoid creating duplicates during generation if possible
+        result = await db.execute(select(Genre).where(Genre.name == name))
+        existing = result.scalars().first()
+        if not existing:
+            genre = Genre(name=name)
+            db.add(genre)
+            genres.append(genre)
+        else:
+            genres.append(existing) # Use existing genre
+    await db.flush()
+    print(f"Ensured {len(genres)} genres exist.")
+    return genres
+
+async def generate_books(db: AsyncSession, count: int, authors: list[Author], genres: list[Genre]):
+    books_to_create = []
+    print(f"Generating {count} books...")
+    for i in range(count):
+        if not authors or not genres:
+            print("Warning: No authors or genres available to assign.")
+            break
+
+        book_data = BookCreate(
+            title=fake.catch_phrase() + " " + random.choice(["Chronicles", "Secrets", "Journey", "Legacy", "Tales"]),
+            year_published=random.randint(1950, 2025),
+            summary=fake.paragraph(nb_sentences=5),
+            age_rating=random.choice(["All", "7+", "13+", "16+", "18+", None]),
+            language=random.choice(["English", "Spanish", "French", "German", "Japanese"]),
+            book_size_pages=random.randint(150, 1200),
+            average_rating=round(random.uniform(2.5, 5.0), 1) if random.random() > 0.1 else None,
+            isbn_13=f"978{random.randint(1000000000, 9999999999)}" if random.random() > 0.05 else None, # Occasionally missing ISBN
+            # Assign random authors/genres by name for simplicity here
+            # In create_book, it handles finding/creating them
+            author_names=[author.name for author in random.sample(authors, k=random.randint(1, min(3, len(authors))))],
+            genre_names=[genre.name for genre in random.sample(genres, k=random.randint(1, min(4, len(genres))))]
+        )
+        books_to_create.append(book_data)
+
+        if (i + 1) % 100 == 0:
+             print(f"Prepared {i+1}/{count} books...")
+
+    # Create books in the database
+    created_books_db = []
+    for book_data in books_to_create:
+         # Use the existing CRUD function which handles relationships
+        try:
+            # Need get_or_create logic within create_book or call it here
+            # For simplicity, assume create_book handles names correctly now
+             created_book = await create_book(db, book_data)
+             created_books_db.append(created_book)
+             if len(created_books_db) % 50 == 0:
+                  print(f"Saved {len(created_books_db)} books to DB...")
+        except Exception as e:
+            # Catch potential unique constraint errors (e.g., duplicate ISBN)
+            print(f"Error creating book '{book_data.title}': {e}. Skipping.")
+            await db.rollback() # Rollback the specific failed book attempt
+            # Ensure the session is still usable after rollback for the next book
+            # If using context manager per book, this is handled automatically
+
+    print(f"Created {len(created_books_db)} books in the database.")
+    return created_books_db
+
+
+async def main(num_authors: int = 50, num_books: int = 500):
+    genres_list = [
+        "Fiction", "Science Fiction", "Fantasy", "Mystery", "Thriller", "Romance",
+        "Historical Fiction", "Non-Fiction", "Biography", "History", "Science",
+        "Self-Help", "Adventure", "Children's", "Young Adult", "Poetry", "Horror"
+    ]
+
+    created_books = []
+    async with AsyncSessionLocal() as session:
+        async with session.begin(): # Use transaction
+            # Generate Authors and Genres first
+            authors = await generate_authors(session, num_authors)
+            genres = await generate_genres(session, genres_list)
+
+            # Generate Books
+            created_books = await generate_books(session, num_books, authors, genres)
+
+    print("\nDatabase population complete.")
+
+    # Index the created books in Elasticsearch
+    if created_books:
+        print(f"\nStarting Elasticsearch indexing for {len(created_books)} books...")
+        await bulk_index_books(created_books)
+        print("Elasticsearch indexing complete.")
+    else:
+        print("\nNo books were created, skipping Elasticsearch indexing.")
+
+
+if __name__ == "__main__":
+    # Example usage: python scripts/generate_data.py
+    # Example usage: python scripts/generate_data.py --books 1000
+    import argparse
+    parser = argparse.ArgumentParser(description="Generate sample book data.")
+    parser.add_argument('--authors', type=int, default=50, help='Number of authors to generate.')
+    parser.add_argument('--books', type=int, default=500, help='Number of books to generate.')
+    args = parser.parse_args()
+
+    asyncio.run(main(num_authors=args.authors, num_books=args.books))
+
+
+
+
+================================================
+File: docker-compose.yml
+================================================
+# docker-compose.yml
+version: '3.8'
+
+networks:
+  backend-network:
+    driver: bridge
+
+services:
+  db:
+    command: ["postgres", "-c", "listen_addresses=*"]
+    networks:
+      - backend-network
+    image: postgres:15-alpine
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: bookdb
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d bookdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    networks:
+      - backend-network
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  es:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.2
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+    networks:
+      - backend-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+
+  backend:
+    networks:
+      - backend-network
+    build: .
+    command: bash -c "sleep 10 && alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+    environment:
+      - SYNC_DATABASE_URL=postgresql://user:password@db:5432/bookdb
+      - DATABASE_URL=postgresql+asyncpg://user:password@db:5432/bookdb
+      - ELASTICSEARCH_URL=http://es:9200
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - EXTERNAL_SEARCH_API_BASE_URL=${EXTERNAL_SEARCH_API_BASE_URL} # Pass from host env or .env file
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      es:
+        condition: service_healthy
+
+  worker:
+    build: .
+    networks:
+      - backend-network
+    command: bash -c "sleep 15 && celery -A app.core.celery_app worker --loglevel=info -P gevent --without-gossip --without-mingle --without-heartbeat"
+    volumes:
+      - .:/app
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://user:password@db:5432/bookdb
+      - ELASTICSEARCH_URL=http://es:9200
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - EXTERNAL_SEARCH_API_BASE_URL=${EXTERNAL_SEARCH_API_BASE_URL} # Pass from host env or .env file
+    depends_on:
+      - db
+      - redis
+      - es
+
+volumes:
+  postgres_data:
+  redis_data:
+  es_data:
+
+
+================================================
+File: requirements.txt
+================================================
+fastapi
+uvicorn[standard] # ASGI server
+sqlalchemy[asyncio] >= 2.0 # ORM
+asyncpg # Postgres driver for asyncio
+pydantic # Data validation (comes with FastAPI)
+pydantic-settings # For loading config from env vars
+elasticsearch[async]==8.13.2 # Elasticsearch async client
+celery >= 5.0 # Task queue
+redis # Celery broker and potentially caching
+python-dotenv # To load .env file for local dev
+alembic # Database migrations
+psycopg2-binary # Needed by Alembic even for asyncpg usage sometimes
+requests # For the data generation script (sync ok here)
+faker # For generating fake data
+uuid # Built-in
+gevent
+httpx>=0.27.0
+
+
+================================================
+File: alembic/README
+================================================
+Generic single-database configuration.
+
+
+================================================
+File: alembic/env.py
+================================================
+# alembic/env.py
+
+from logging.config import fileConfig
+from sqlalchemy import engine_from_config
+from sqlalchemy import pool
+from alembic import context
+import sys
+import os
+
+# Add your project root to Python path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Import your Base and models
+from app.core.db import Base  # This is critical
+from app.core.config import settings
+from app.models.author import Author
+from app.models.book import Book
+from app.models.genre import Genre
+
+# This is the key line that was missing/misconfigured
+target_metadata = Base.metadata
+
+# Rest of the file remains the same below this line...
+config = context.config
+
+if config.config_file_name is not None:
+    fileConfig(config.config_file_name)
+
+def run_migrations_offline() -> None:
+    url = config.get_main_option("sqlalchemy.url")
+    context.configure(
+        url=url,
+        target_metadata=target_metadata,  # This now points to your Base metadata
+        literal_binds=True,
+        dialect_opts={"paramstyle": "named"},
+    )
+
+    with context.begin_transaction():
+        context.run_migrations()
+
+def run_migrations_online() -> None:
+    connectable = engine_from_config(
+        config.get_section(config.config_ini_section),
+        prefix="sqlalchemy.",
+        poolclass=pool.NullPool,
+    )
+
+    with connectable.connect() as connection:
+        context.configure(
+            connection=connection, 
+            target_metadata=target_metadata  # Properly configured now
+        )
+
+        with context.begin_transaction():
+            context.run_migrations()
+
+if context.is_offline_mode():
+    run_migrations_offline()
+else:
+    run_migrations_online()
+
+
+================================================
+File: alembic/script.py.mako
+================================================
+"""${message}
+
+Revision ID: ${up_revision}
+Revises: ${down_revision | comma,n}
+Create Date: ${create_date}
+
+"""
+from typing import Sequence, Union
+
+from alembic import op
+import sqlalchemy as sa
+${imports if imports else ""}
+
+# revision identifiers, used by Alembic.
+revision: str = ${repr(up_revision)}
+down_revision: Union[str, None] = ${repr(down_revision)}
+branch_labels: Union[str, Sequence[str], None] = ${repr(branch_labels)}
+depends_on: Union[str, Sequence[str], None] = ${repr(depends_on)}
+
+
+def upgrade() -> None:
+    """Upgrade schema."""
+    ${upgrades if upgrades else "pass"}
+
+
+def downgrade() -> None:
+    """Downgrade schema."""
+    ${downgrades if downgrades else "pass"}
+
+
+
+
+================================================
+File: alembic/versions/83b887301cca_initial_tables.py
+================================================
+"""Initial tables
+
+Revision ID: 83b887301cca
+Revises: d4b47cf318dc
+Create Date: 2025-04-27 00:45:43.019702
+
+"""
+from typing import Sequence, Union
+
+from alembic import op
+import sqlalchemy as sa
+
+
+# revision identifiers, used by Alembic.
+revision: str = '83b887301cca'
+down_revision: Union[str, None] = 'd4b47cf318dc'
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
+
+
+def upgrade() -> None:
+    """Upgrade schema."""
+    # ### commands auto generated by Alembic - please adjust! ###
+    pass
+    # ### end Alembic commands ###
+
+
+def downgrade() -> None:
+    """Downgrade schema."""
+    # ### commands auto generated by Alembic - please adjust! ###
+    pass
+    # ### end Alembic commands ###
+
+
+
+================================================
+File: alembic/versions/d4b47cf318dc_initial_migration.py
+================================================
+"""Initial migration
+
+Revision ID: d4b47cf318dc
+Revises: 
+Create Date: 2025-04-26 22:16:56.109826
+
+"""
+from typing import Sequence, Union
+
+from alembic import op
+import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
+
+# revision identifiers, used by Alembic.
+revision: str = 'd4b47cf318dc'
+down_revision: Union[str, None] = None
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
+
+
+def upgrade() -> None:
+    """Upgrade schema."""
+    # ### commands auto generated by Alembic - please adjust! ###
+    op.create_table('authors',
+    sa.Column('name', sa.String(), nullable=False),
+    sa.Column('id', sa.UUID(), nullable=False),
+    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
+    sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
+    sa.PrimaryKeyConstraint('id')
+    )
+    op.create_index(op.f('ix_authors_name'), 'authors', ['name'], unique=True)
+    op.create_table('books',
+    sa.Column('title', sa.String(), nullable=False),
+    sa.Column('year_published', sa.Integer(), nullable=True),
+    sa.Column('summary', sa.Text(), nullable=True),
+    sa.Column('age_rating', sa.String(), nullable=True),
+    sa.Column('language', sa.String(), nullable=True),
+    sa.Column('book_size_pages', sa.Integer(), nullable=True),
+    sa.Column('book_size_description', sa.String(), nullable=True),
+    sa.Column('average_rating', sa.Float(), nullable=True),
+    sa.Column('rating_details', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+    sa.Column('source_url', sa.String(), nullable=True),
+    sa.Column('isbn_10', sa.String(length=10), nullable=True),
+    sa.Column('isbn_13', sa.String(length=13), nullable=True),
+    sa.Column('id', sa.UUID(), nullable=False),
+    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
+    sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
+    sa.PrimaryKeyConstraint('id')
+    )
+    op.create_index(op.f('ix_books_average_rating'), 'books', ['average_rating'], unique=False)
+    op.create_index(op.f('ix_books_isbn_10'), 'books', ['isbn_10'], unique=False)
+    op.create_index(op.f('ix_books_isbn_13'), 'books', ['isbn_13'], unique=True)
+    op.create_index(op.f('ix_books_language'), 'books', ['language'], unique=False)
+    op.create_index(op.f('ix_books_title'), 'books', ['title'], unique=False)
+    op.create_index(op.f('ix_books_year_published'), 'books', ['year_published'], unique=False)
+    op.create_table('genres',
+    sa.Column('name', sa.String(), nullable=False),
+    sa.Column('id', sa.UUID(), nullable=False),
+    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
+    sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
+    sa.PrimaryKeyConstraint('id')
+    )
+    op.create_index(op.f('ix_genres_name'), 'genres', ['name'], unique=True)
+    op.create_table('book_authors',
+    sa.Column('book_id', sa.UUID(), nullable=False),
+    sa.Column('author_id', sa.UUID(), nullable=False),
+    sa.ForeignKeyConstraint(['author_id'], ['authors.id'], ),
+    sa.ForeignKeyConstraint(['book_id'], ['books.id'], ),
+    sa.PrimaryKeyConstraint('book_id', 'author_id')
+    )
+    op.create_table('book_genres',
+    sa.Column('book_id', sa.UUID(), nullable=False),
+    sa.Column('genre_id', sa.UUID(), nullable=False),
+    sa.ForeignKeyConstraint(['book_id'], ['books.id'], ),
+    sa.ForeignKeyConstraint(['genre_id'], ['genres.id'], ),
+    sa.PrimaryKeyConstraint('book_id', 'genre_id')
+    )
+    # ### end Alembic commands ###
+
+
+def downgrade() -> None:
+    """Downgrade schema."""
+    # ### commands auto generated by Alembic - please adjust! ###
+    op.drop_table('book_genres')
+    op.drop_table('book_authors')
+    op.drop_index(op.f('ix_genres_name'), table_name='genres')
+    op.drop_table('genres')
+    op.drop_index(op.f('ix_books_year_published'), table_name='books')
+    op.drop_index(op.f('ix_books_title'), table_name='books')
+    op.drop_index(op.f('ix_books_language'), table_name='books')
+    op.drop_index(op.f('ix_books_isbn_13'), table_name='books')
+    op.drop_index(op.f('ix_books_isbn_10'), table_name='books')
+    op.drop_index(op.f('ix_books_average_rating'), table_name='books')
+    op.drop_table('books')
+    op.drop_index(op.f('ix_authors_name'), table_name='authors')
+    op.drop_table('authors')
+    # ### end Alembic commands ###
+
+
+
+
+================================================
+File: app/main.py
+================================================
+# app/main.py
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
+from app.api.api_v1.router import api_router
+from app.core.config import settings
+from app.core.db import engine, Base # Import Base for metadata
+from app.core.es import check_and_create_es_index, close_es_client
+
+# Database initialization function (optional but good practice)
+async def init_db():
+    # This is more for dev/testing; use Alembic for production schema management
+    # async with engine.begin() as conn:
+        # await conn.run_sync(Base.metadata.drop_all) # Use with caution!
+        # await conn.run_sync(Base.metadata.create_all)
+    # print("Database tables checked/created.")
+    pass # Rely on Alembic
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup events
+    print("Starting up...")
+    # await init_db() # Initialize DB tables if needed (better to use migrations)
+    print("Checking Elasticsearch connection and index...")
+    await check_and_create_es_index() # Check/Create ES index on startup
+    yield
+    # Shutdown events
+    print("Shutting down...")
+    await close_es_client() # Close ES client gracefully
+    print("Shutdown complete.")
+
+
+app = FastAPI(
+    title=settings.PROJECT_NAME,
+    openapi_url=f"{settings.API_V1_STR}/openapi.json",
+    lifespan=lifespan # Use the new lifespan context manager
+)
+
+# Include the API router
+app.include_router(api_router, prefix=settings.API_V1_STR)
+
+@app.get("/", tags=["Root"])
+async def read_root():
+    return {"message": f"Welcome to the {settings.PROJECT_NAME}!"}
+
+# Optional: Add CORS middleware if frontend is on a different domain
+from fastapi.middleware.cors import CORSMiddleware
+
+origins = ["*"]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+if __name__ == "__main__":
+    import uvicorn
+    # Run with: uvicorn app.main:app --reload --port 8000
+    # Ensure your PYTHONPATH includes the project root or run from the root directory
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
+
+
+
+================================================
+File: app/api/api_v1/router.py
+================================================
+# app/api/api_v1/router.py
+from fastapi import APIRouter
+from .endpoints import search, books, utils
+
+api_router = APIRouter()
+
+api_router.include_router(search.router, prefix="/search", tags=["Search"])
+api_router.include_router(books.router, prefix="/books", tags=["Books"])
+api_router.include_router(utils.router, prefix="/utils", tags=["Utilities"]) # Genres, Authors
+
+
+
+================================================
+File: app/api/api_v1/endpoints/books.py
+================================================
+# app/api/api_v1/endpoints/books.py
+from fastapi import APIRouter, HTTPException, Depends, Query, status, BackgroundTasks # Remove BackgroundTasks import
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.schemas.genre import GenrePublic
+from app.schemas.author import AuthorPublic
+from app.core.db import get_db
+from app.schemas.book import BookPublic, PaginatedResponse
+from app.services.search_service import search_books_in_es
+from typing import List, Optional
+import uuid
+
+# Import the task
+from app.tasks.scrape import process_search_query
+
+router = APIRouter()
+
+@router.get("/", response_model=PaginatedResponse[BookPublic])
+async def get_books_from_search(
+    # Remove background_tasks: BackgroundTasks dependency
+    q: Optional[str] = Query(None, description="Search query string (searches title, authors, summary, etc.)"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    sort_by: Optional[str] = Query("relevance", description="Sort criteria (e.g., relevance, rating_desc, year_asc, title_asc)"),
+    author: Optional[str] = Query(None, description="Filter by author name"),
+    genre: Optional[str] = Query(None, description="Filter by genre name"),
+    min_year: Optional[int] = Query(None, description="Filter by minimum publication year"),
+    max_year: Optional[int] = Query(None, description="Filter by maximum publication year"),
+    min_rating: Optional[float] = Query(None, description="Filter by minimum average rating"),
+    language: Optional[str] = Query(None, description="Filter by language"),
+    # db: AsyncSession = Depends(get_db) # Not needed if using ES primarily
+):
+    """
+    Retrieves a list of books based on search query, filters, and sorting
+    using the Elasticsearch index.
+    Also triggers a background Celery task to update results from external sources if a query 'q' is provided.
+    """
+    filters = {
+        "author": author,
+        "genre": genre,
+        "min_year": min_year,
+        "max_year": max_year,
+        "min_rating": min_rating,
+        "language": language,
+    }
+    # Remove None values from filters dict
+    active_filters = {k: v for k, v in filters.items() if v is not None}
+
+    results, total_hits = await search_books_in_es(
+        query=q,
+        filters=active_filters,
+        sort_by=sort_by,
+        page=page,
+        page_size=page_size
+    )
+
+    # --- Trigger background Celery task IF a query was provided ---
+    if q and q.strip(): # Check if q is not None and not just whitespace
+        # Trigger the Celery task directly using .delay()
+        # The task itself handles iterating sources and fields internally now
+        task = process_search_query.delay(q)
+        print(f"Dispatched Celery task {task.id} for query: '{q}' from /books endpoint.")
+        # You could optionally return the task.id in the response if the schema allowed
+        # return PaginatedResponse[BookPublic](...), task_id=task.id
+    # ---------------------------------------------------------------
+
+    # Convert ES results (_source) to BookPublic schema
+    # Assuming the data stored in ES matches the BookPublic schema structure
+    # If not, you might need to fetch full data from DB based on IDs
+    # Need to handle potential None/missing keys gracefully for ES results
+    public_results = [
+        BookPublic(
+            **{k: v for k, v in result.items() if k not in ['authors', 'genres']}, # Exclude nested objects first
+            authors=[AuthorPublic(**a) for a in result.get("authors", []) if isinstance(a, dict)], # Safely get and convert nested authors
+            genres=[GenrePublic(**g) for g in result.get("genres", []) if isinstance(g, dict)]   # Safely get and convert nested genres
+        )
+        for result in results
+    ]
+
+
+    return PaginatedResponse[BookPublic](
+        results=public_results,
+        total_hits=total_hits,
+        page=page,
+        page_size=page_size
+    )
+
+
+# Optional: Endpoint to get a single book by ID (from DB for full details)
+from app.crud import crud_book
+
+@router.get("/{book_id}", response_model=BookPublic)
+async def read_book(
+    book_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get a single book by its ID from the database.
+    """
+    db_book = await crud_book.get_book(db=db, book_id=book_id)
+    if db_book is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Book not found")
+    # Schema conversion handles related authors/genres automatically if loaded
+    # Pydantic v2 `from_attributes=True` handles mapping ORM to Pydantic
+    return db_book
+
+
+================================================
+File: app/api/api_v1/endpoints/search.py
+================================================
+# app/api/api_v1/endpoints/search.py
+# (No changes needed in this file for this request)
+from fastapi import APIRouter, HTTPException, status, BackgroundTasks, Depends
+from app.schemas.genre import GenrePublic
+from app.schemas.author import AuthorPublic
+from app.schemas.book import SearchRequest, SearchResponse, BookPublic
+from app.schemas.common import PaginatedResponse
+from app.tasks.scrape import process_search_query
+from app.services.search_service import search_books_in_es
+from app.core.es import get_es_client # Dependency for ES client
+from elasticsearch import AsyncElasticsearch
+
+router = APIRouter()
+
+@router.post("/", response_model=SearchResponse, status_code=status.HTTP_202_ACCEPTED)
+async def initiate_search(
+    search_request: SearchRequest,
+    background_tasks: BackgroundTasks,
+    es_client: AsyncElasticsearch = Depends(get_es_client) # Inject ES client
+):
+    """
+    Accepts a search query, optionally returns immediate results from Elasticsearch,
+    and triggers a background task to fetch/update data from external sources
+    (now searches OpenLib & Google by Author & Title).
+    """
+    print(f"Received explicit search request via POST: {search_request.query}")
+
+    # --- Perform initial ES search ---
+    initial_results, total_hits = await search_books_in_es(
+        query=search_request.query,
+        page=search_request.page,
+        page_size=search_request.page_size,
+        # Add default sort if needed, e.g., sort_by="relevance"
+    )
+
+    # --- Trigger the background task ---
+    # The task signature has changed, so we only pass the query.
+    # The task itself handles iterating sources and fields.
+    if search_request.query and search_request.query.strip():
+        task = process_search_query.delay(search_request.query)
+        print(f"Dispatched background task {task.id} for query: {search_request.query}")
+        message = "Search task accepted. Returning initial results from existing data. Index will be updated in the background from multiple sources."
+        task_id = task.id
+    else:
+        print("No query provided in search request, background task not dispatched.")
+        message = "No query provided. Returning initial results based on filters/defaults only. No background task dispatched."
+        task_id = None
+
+    # Convert ES results (_source) to BookPublic schemas if needed
+    public_results = [
+        BookPublic(
+            **{k: v for k, v in result.items() if k not in ['authors', 'genres']},
+            authors=[AuthorPublic(**a) for a in result.get("authors", [])], # Use .get for safety
+            genres=[GenrePublic(**g) for g in result.get("genres", [])]    # Use .get for safety
+        )
+        for result in initial_results
+    ]
+
+    return SearchResponse(
+        task_id=task_id,
+        message=message,
+        initial_results=public_results,
+        total_hits=total_hits
+    )
+
+
+================================================
+File: app/api/api_v1/endpoints/utils.py
+================================================
+# app/api/api_v1/endpoints/utils.py
+from fastapi import APIRouter, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.core.db import get_db
+from app.schemas.genre import GenrePublic
+from app.schemas.author import AuthorPublic
+from app.crud import crud_genre, crud_author
+from typing import List
+
+router = APIRouter()
+
+@router.get("/genres", response_model=List[GenrePublic])
+async def get_all_genres(
+    skip: int = 0,
+    limit: int = 100,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Retrieve a list of all unique genres.
+    """
+    genres = await crud_genre.get_genres(db, skip=skip, limit=limit)
+    return genres
+
+
+@router.get("/authors", response_model=List[AuthorPublic])
+async def get_all_authors(
+    skip: int = 0,
+    limit: int = 100,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Retrieve a list of all unique authors.
+    """
+    authors = await crud_author.get_authors(db, skip=skip, limit=limit)
+    return authors
+
+
+
+================================================
+File: app/core/celery_app.py
+================================================
+# app/core/celery_app.py
+from celery import Celery
+from .config import settings
+
+# Explicitly use the app name as the main module name
+celery_app = Celery(
+    "book_search_tasks",
+    broker=settings.CELERY_BROKER_URL,
+    backend=settings.CELERY_RESULT_BACKEND,
+    include=["app.tasks.scrape"],
+    # Initial serializers - will be updated by conf.update
+    # task_serializer='json',
+    # result_serializer='json',
+    # event_serializer='json',
+    # accept_content=['json'],
+)
+
+# Configure serialization explicitly after app creation
+celery_app.conf.update(
+    task_serializer="pickle",  # Use pickle for tasks
+    accept_content=["pickle", "json"], # Accept both, pickle preferred for complex objects
+    result_serializer="pickle", # Use pickle for results - handles more types than json
+    event_serializer="json", # Event serialization is less critical and JSON is fine
+    timezone="UTC",
+    enable_utc=True,
+    broker_connection_max_retries=10,
+    task_default_retry_delay=120, # Increased retry delay from 60
+    result_extended=True,
+    task_track_started=True,
+    worker_proc_alive_timeout=300, # Increased timeout for async workers
+    broker_connection_retry_on_startup=True,
+)
+
+# If you want Celery to automatically discover tasks in the included modules:
+# celery_app.autodiscover_tasks(lambda: ["app.tasks"]) # Requires specific structure
+
+
+================================================
+File: app/core/config.py
+================================================
+# app/core/config.py
+import os
+from pydantic_settings import BaseSettings
+from functools import lru_cache
+from dotenv import load_dotenv
+import warnings # Import warnings
+
+# Load .env file if it exists (especially for local development)
+load_dotenv()
+
+class Settings(BaseSettings):
+    PROJECT_NAME: str = "Book Search Service"
+    API_V1_STR: str = "/api/v1"
+
+    # Database Config
+    DATABASE_URL: str = os.getenv("DATABASE_URL", "postgresql+asyncpg://user:password@localhost:5432/bookdb")
+    # Sync URL needed for Alembic
+    SYNC_DATABASE_URL: str = os.getenv("SYNC_DATABASE_URL", "postgresql://user:password@localhost:5432/bookdb")
+
+
+    # Elasticsearch Config
+    ELASTICSEARCH_URL: str = os.getenv("ELASTICSEARCH_URL", "http://localhost:9200")
+    ELASTICSEARCH_USERNAME: str | None = os.getenv("ELASTICSEARCH_USERNAME")
+    ELASTICSEARCH_PASSWORD: str | None = os.getenv("ELASTICSEARCH_PASSWORD")
+    ELASTICSEARCH_INDEX_NAME: str = "books_index"
+
+    # Celery Config
+    CELERY_BROKER_URL: str = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
+    CELERY_RESULT_BACKEND: str = os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/1")
+
+    # External Search API Config
+    EXTERNAL_SEARCH_API_BASE_URL: str | None = os.getenv("EXTERNAL_SEARCH_API_BASE_URL") # e.g., http://192.168.1.126:5000
+    # Default external API URL if not set in environment (optional, use with caution)
+    # EXTERNAL_SEARCH_API_BASE_URL: str = "http://localhost:5000" # Example default
+
+    # Add other settings as needed
+
+    class Config:
+        case_sensitive = True
+        # If using a .env file:
+        # env_file = ".env"
+        # env_file_encoding = 'utf-8'
+
+@lru_cache()
+def get_settings() -> Settings:
+    s = Settings()
+    # Add a warning if the crucial external API URL is not set
+    if not s.EXTERNAL_SEARCH_API_BASE_URL:
+        warnings.warn(
+            "EXTERNAL_SEARCH_API_BASE_URL environment variable is not set. "
+            "External search functionality will be disabled or may fail.",
+            RuntimeWarning
+        )
+    return s
+
+settings = get_settings()
+
+
+================================================
+File: app/core/db.py
+================================================
+# app/core/db.py
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from sqlalchemy.orm import declarative_base
+from sqlalchemy import Column, DateTime, func
+import uuid
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+
+from .config import settings
+
+# Create async engine instance
+engine = create_async_engine(settings.DATABASE_URL, echo=False, future=True)
+
+# Create sessionmaker
+AsyncSessionLocal = async_sessionmaker(
+    bind=engine,
+    class_=AsyncSession,
+    expire_on_commit=False,
+    autoflush=False,
+    autocommit=False
+)
+from sqlalchemy import Column, DateTime, func
+import uuid
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from sqlalchemy.ext.declarative import declarative_base
+
+class BaseMixin:
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+Base = declarative_base(cls=BaseMixin)
+
+
+# Dependency to get DB session
+async def get_db() -> AsyncSession:
+    async with AsyncSessionLocal() as session:
+        try:
+            yield session
+            await session.commit() # Commit session if no exceptions occurred
+        except Exception:
+            await session.rollback() # Rollback on error
+            raise
+        finally:
+            await session.close()
+
+# --- Sync engine for Alembic ---
+# Alembic needs a sync engine to work properly
+# You might not need this if your migrations don't involve complex data operations
+from sqlalchemy import create_engine
+sync_engine = create_engine(settings.SYNC_DATABASE_URL, echo=False)
+
+
+================================================
+File: app/core/es.py
+================================================
+# app/core/es.py
+from elasticsearch import AsyncElasticsearch
+from .config import settings
+from functools import lru_cache
+
+@lru_cache()
+def get_es_client() -> AsyncElasticsearch:
+    return AsyncElasticsearch(
+        hosts=[settings.ELASTICSEARCH_URL],
+        retry_on_timeout=True,
+        verify_certs=False,
+        max_retries=10,
+        request_timeout=30
+    )
+
+async def close_es_client():
+    client = get_es_client()
+    await client.close()
+
+# Example function to check connection and create index if not exists
+async def check_and_create_es_index():
+    client = get_es_client()
+    index_name = settings.ELASTICSEARCH_INDEX_NAME
+    try:
+        if not await client.ping():
+            raise ConnectionError("Elasticsearch connection failed")
+
+        if not await client.indices.exists(index=index_name):
+            print(f"Creating Elasticsearch index: {index_name}")
+            # Define your index mapping here (adjust as needed)
+            # This is crucial for defining data types and analyzers for search
+            mapping = {
+                "properties": {
+                    "id": {"type": "keyword"},
+                    "title": {"type": "text", "analyzer": "standard"},
+                    "title_sort": {"type": "keyword"},
+                    "year_published": {"type": "integer"},
+                    "summary": {"type": "text", "analyzer": "standard"},
+                    "age_rating": {"type": "keyword"},
+                    "language": {"type": "keyword"},
+                    "book_size_pages": {"type": "integer"},
+                    "average_rating": {"type": "float"},
+                    "isbn_13": {"type": "keyword"},
+                    "authors": {
+                        "type": "nested",
+                        "properties": {
+                            "id": {"type": "keyword"},
+                            "name": {"type": "text"}
+                        }
+                    },
+                    "genres": {
+                        "type": "nested", 
+                        "properties": {
+                            "id": {"type": "keyword"},
+                            "name": {"type": "text"}
+                        }
+                    },
+                    "search_text": {"type": "text", "analyzer": "standard"} # Consolidated field
+                }
+            }
+            await client.indices.create(index=index_name, mappings=mapping)
+            print(f"Index {index_name} created.")
+        else:
+             print(f"Elasticsearch index {index_name} already exists.")
+
+    except Exception as e:
+        print(f"Error connecting to or setting up Elasticsearch: {e}")
+        # Decide how to handle this - maybe raise the exception to stop startup
+
+
+
+================================================
+File: app/crud/crud_author.py
+================================================
+# app/crud/crud_author.py
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
+from sqlalchemy.orm import selectinload
+from app.models.author import Author
+from app.schemas.author import AuthorCreate
+import uuid
+from typing import List, Optional
+
+async def get_author(db: AsyncSession, author_id: uuid.UUID) -> Optional[Author]:
+    result = await db.execute(select(Author).where(Author.id == author_id))
+    return result.scalars().first()
+
+async def get_author_by_name(db: AsyncSession, name: str) -> Optional[Author]:
+    result = await db.execute(select(Author).where(Author.name == name))
+    return result.scalars().first()
+
+async def get_or_create_author(db: AsyncSession, name: str) -> Author:
+    author = await get_author_by_name(db, name)
+    if not author:
+        author = Author(name=name)
+        db.add(author)
+        await db.flush() # Flush to get the ID if needed before commit
+        await db.refresh(author)
+    return author
+
+async def get_authors(db: AsyncSession, skip: int = 0, limit: int = 100) -> List[Author]:
+    result = await db.execute(select(Author).offset(skip).limit(limit))
+    return result.scalars().all()
+
+async def create_author(db: AsyncSession, author: AuthorCreate) -> Author:
+    db_author = Author(name=author.name)
+    db.add(db_author)
+    await db.flush()
+    await db.refresh(db_author)
+    return db_author
+
+
+================================================
+File: app/crud/crud_book.py
+================================================
+# app/crud/crud_book.py
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
+from sqlalchemy.orm import selectinload, joinedload
+from app.models.book import Book
+from app.models.author import Author
+from app.models.genre import Genre
+from app.schemas.book import BookCreate, BookUpdate
+from .crud_author import get_author, get_or_create_author
+from .crud_genre import get_genre, get_or_create_genre
+import uuid
+from typing import List, Optional
+
+# Helper to load relationships
+def _get_book_query_with_relationships():
+    return select(Book).options(
+        selectinload(Book.authors),
+        selectinload(Book.genres)
+    )
+
+async def get_book(db: AsyncSession, book_id: uuid.UUID) -> Optional[Book]:
+    result = await db.execute(
+        _get_book_query_with_relationships().where(Book.id == book_id)
+    )
+    return result.scalars().first()
+
+async def get_book_by_isbn13(db: AsyncSession, isbn13: str) -> Optional[Book]:
+    if not isbn13: return None
+    result = await db.execute(
+        _get_book_query_with_relationships().where(Book.isbn_13 == isbn13)
+    )
+    return result.scalars().first()
+
+# Note: This function is simplified. A real implementation would need
+# more sophisticated matching (fuzzy title/author, year proximity etc.)
+# if ISBN is not available.
+async def find_existing_book(db: AsyncSession, book_data: BookCreate) -> Optional[Book]:
+    # Prioritize ISBN lookup
+    if book_data.isbn_13:
+        existing = await get_book_by_isbn13(db, book_data.isbn_13)
+        if existing:
+            return existing
+
+    # Basic title/first author match as fallback (can be unreliable)
+    if book_data.title and book_data.author_names:
+         first_author_name = book_data.author_names[0]
+         stmt = _get_book_query_with_relationships().join(Book.authors).where(
+             Book.title == book_data.title,
+             Author.name == first_author_name
+         )
+         # Add year proximity check if available
+         if book_data.year_published:
+             stmt = stmt.where(Book.year_published.between(
+                 book_data.year_published - 1, book_data.year_published + 1)
+             )
+         result = await db.execute(stmt)
+         return result.scalars().first() # Might return multiple, take first for simplicity
+
+    return None
+
+
+async def create_book(db: AsyncSession, book: BookCreate) -> Book:
+    db_book = Book(**book.model_dump(exclude={'author_ids', 'genre_ids', 'author_names', 'genre_names'}))
+
+    # Handle Authors
+    db_book.authors = []
+    if book.author_ids:
+        for author_id in book.author_ids:
+            author = await get_author(db, author_id)
+            if author:
+                db_book.authors.append(author)
+    elif book.author_names:
+        for name in book.author_names:
+            author = await get_or_create_author(db, name)
+            db_book.authors.append(author)
+
+    # Handle Genres
+    db_book.genres = []
+    if book.genre_ids:
+        for genre_id in book.genre_ids:
+            genre = await get_genre(db, genre_id)
+            if genre:
+                db_book.genres.append(genre)
+    elif book.genre_names:
+        for name in book.genre_names:
+            genre = await get_or_create_genre(db, name)
+            db_book.genres.append(genre)
+
+    db.add(db_book)
+    await db.flush()
+    await db.refresh(db_book, attribute_names=['authors', 'genres']) # Refresh to load relationships fully
+    return db_book
+
+async def update_book(db: AsyncSession, db_book: Book, book_in: BookUpdate) -> Book:
+    update_data = book_in.model_dump(exclude_unset=True)
+
+    for key, value in update_data.items():
+         # Handle relationships separately if IDs are provided
+        if key not in ['author_ids', 'genre_ids']:
+             setattr(db_book, key, value)
+
+    # Update relationships if IDs are provided in the update payload
+    if book_in.author_ids is not None:
+        db_book.authors = []
+        for author_id in book_in.author_ids:
+            author = await get_author(db, author_id)
+            if author:
+                db_book.authors.append(author)
+
+    if book_in.genre_ids is not None:
+        db_book.genres = []
+        for genre_id in book_in.genre_ids:
+            genre = await get_genre(db, genre_id)
+            if genre:
+                db_book.genres.append(genre)
+
+    db.add(db_book)
+    await db.flush()
+    await db.refresh(db_book, attribute_names=['authors', 'genres'])
+    return db_book
+
+async def get_books(db: AsyncSession, skip: int = 0, limit: int = 100) -> List[Book]:
+    # Basic retrieval, not using ES here. ES is used for the main search/filter endpoint.
+    result = await db.execute(
+        _get_book_query_with_relationships().offset(skip).limit(limit)
+    )
+    return result.scalars().unique().all() # .unique() needed with selectinload
+
+
+================================================
+File: app/crud/crud_genre.py
+================================================
+# app/crud/crud_genre.py
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
+from app.models.genre import Genre
+from app.schemas.genre import GenreCreate
+import uuid
+from typing import List, Optional
+
+async def get_genre(db: AsyncSession, genre_id: uuid.UUID) -> Optional[Genre]:
+    result = await db.execute(select(Genre).where(Genre.id == genre_id))
+    return result.scalars().first()
+
+async def get_genre_by_name(db: AsyncSession, name: str) -> Optional[Genre]:
+    result = await db.execute(select(Genre).where(Genre.name == name))
+    return result.scalars().first()
+
+async def get_or_create_genre(db: AsyncSession, name: str) -> Genre:
+    genre = await get_genre_by_name(db, name)
+    if not genre:
+        genre = Genre(name=name)
+        db.add(genre)
+        await db.flush()
+        await db.refresh(genre)
+    return genre
+
+async def get_genres(db: AsyncSession, skip: int = 0, limit: int = 100) -> List[Genre]:
+    result = await db.execute(select(Genre).offset(skip).limit(limit))
+    return result.scalars().all()
+
+async def create_genre(db: AsyncSession, genre: GenreCreate) -> Genre:
+    db_genre = Genre(name=genre.name)
+    db.add(db_genre)
+    await db.flush()
+    await db.refresh(db_genre)
+    return db_genre
+
+
+
+================================================
+File: app/models/association.py
+================================================
+# app/models/association.py
+from sqlalchemy import Column, Table, ForeignKey
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from app.core.db import Base
+
+book_authors_association = Table(
+    'book_authors', Base.metadata,
+    Column('book_id', PG_UUID(as_uuid=True), ForeignKey('books.id'), primary_key=True),
+    Column('author_id', PG_UUID(as_uuid=True), ForeignKey('authors.id'), primary_key=True)
+)
+
+book_genres_association = Table(
+    'book_genres', Base.metadata,
+    Column('book_id', PG_UUID(as_uuid=True), ForeignKey('books.id'), primary_key=True),
+    Column('genre_id', PG_UUID(as_uuid=True), ForeignKey('genres.id'), primary_key=True)
+)
+
+
+================================================
+File: app/models/author.py
+================================================
+from sqlalchemy import Column, String  # Add missing imports
+from sqlalchemy.orm import relationship
+from app.core.db import Base
+from app.models.association import book_authors_association
+
+class Author(Base):
+    __tablename__ = "authors"
+    name = Column(String, unique=True, index=True, nullable=False)  # Now Column is defined
+
+    books = relationship(
+        "Book",
+        secondary=book_authors_association,
+        back_populates="authors"
+    )
+
+    def __repr__(self):
+        return f"<Author(id={self.id}, name='{self.name}')>"
+
+
+================================================
+File: app/models/base.py
+================================================
+# app/models/base.py
+# Base class is defined in app/core/db.py
+from app.core.db import Base
+
+
+================================================
+File: app/models/book.py
+================================================
+# app/models/book.py
+from sqlalchemy import Column, Table, ForeignKey, String, Integer, Text, Float  # Add missing imports
+from sqlalchemy.orm import relationship
+from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
+from app.core.db import Base
+from app.models.association import (
+    book_authors_association,
+    book_genres_association
+)
+
+# Association table for Many-to-Many relationship between Books and Authors
+book_authors_association = Table(
+    'book_authors', Base.metadata,
+    Column('book_id', PG_UUID(as_uuid=True), ForeignKey('books.id'), primary_key=True),
+    Column('author_id', PG_UUID(as_uuid=True), ForeignKey('authors.id'), primary_key=True)
+    ,extend_existing=True
+)
+
+# Association table for Many-to-Many relationship between Books and Genres
+book_genres_association = Table(
+    'book_genres', Base.metadata,
+    Column('book_id', PG_UUID(as_uuid=True), ForeignKey('books.id'), primary_key=True),
+    Column('genre_id', PG_UUID(as_uuid=True), ForeignKey('genres.id'), primary_key=True)
+    ,extend_existing=True
+)
+
+
+class Book(Base):
+    __tablename__ = "books"
+
+    title = Column(String, index=True, nullable=False)
+    year_published = Column(Integer, index=True, nullable=True)
+    summary = Column(Text, nullable=True)
+    age_rating = Column(String, nullable=True)
+    language = Column(String, index=True, nullable=True)
+    book_size_pages = Column(Integer, nullable=True)
+    book_size_description = Column(String, nullable=True)
+    average_rating = Column(Float, index=True, nullable=True)
+    rating_details = Column(JSONB, nullable=True) # e.g., [{"source": "GoodReads", "rating": 4.5, "votes": 150}]
+    source_url = Column(String, nullable=True)
+    isbn_10 = Column(String(10), index=True, nullable=True)
+    isbn_13 = Column(String(13), unique=True, index=True, nullable=True)
+
+    # Relationships
+    authors = relationship(
+        "Author",
+        secondary=book_authors_association,
+        back_populates="books",
+        lazy="selectin" # Use selectin loading for async many-to-many
+    )
+    genres = relationship(
+        "Genre",
+        secondary=book_genres_association,
+        back_populates="books",
+        lazy="selectin" # Use selectin loading for async many-to-many
+    )
+
+    def __repr__(self):
+        return f"<Book(id={self.id}, title='{self.title}')>"
+
+
+================================================
+File: app/models/genre.py
+================================================
+
+from sqlalchemy import Column, String  # Add this
+from sqlalchemy.orm import relationship
+from app.core.db import Base
+from app.models.association import book_genres_association
+
+class Genre(Base):
+    __tablename__ = "genres"
+    name = Column(String, unique=True, index=True, nullable=False)
+
+    # Relationship to books (many-to-many)
+    books = relationship(
+        "Book",
+        secondary=book_genres_association,
+        back_populates="genres"
+    )
+
+    def __repr__(self):
+        return f"<Genre(id={self.id}, name='{self.name}')>"
+
+
+
+================================================
+File: app/schemas/author.py
+================================================
+# app/schemas/author.py
+from pydantic import BaseModel, Field
+from .common import BaseSchema, UUIDSchema
+
+class AuthorBase(BaseSchema):
+    name: str = Field(..., min_length=1, max_length=255)
+
+class AuthorCreate(AuthorBase):
+    pass
+
+class Author(AuthorBase, UUIDSchema):
+    pass # Inherits id and name
+
+class AuthorPublic(AuthorBase, UUIDSchema):
+    # Example if you wanted to exclude fields later
+    pass
+
+
+================================================
+File: app/schemas/book.py
+================================================
+# app/schemas/book.py
+from pydantic import BaseModel, Field, validator
+from typing import List, Optional, Any, Dict
+import uuid
+from .common import BaseSchema, UUIDSchema, PaginatedResponse
+from .author import AuthorPublic
+from .genre import GenrePublic
+
+class BookBase(BaseSchema):
+    title: str = Field(..., min_length=1, max_length=500)
+    year_published: Optional[int] = Field(None, ge=0, le=3000) # Example range
+    summary: Optional[str] = None
+    age_rating: Optional[str] = Field(None, max_length=50)
+    language: Optional[str] = Field(None, max_length=50)
+    book_size_pages: Optional[int] = Field(None, ge=0)
+    book_size_description: Optional[str] = Field(None, max_length=100)
+    average_rating: Optional[float] = Field(None, ge=0, le=10) # Assuming a 0-10 scale, adjust if needed
+    rating_details: Optional[List[Dict[str, Any]]] = None # e.g., [{"source": "GoodReads", "rating": 4.5}]
+    source_url: Optional[str] = Field(None, max_length=2048)
+    isbn_10: Optional[str] = Field(None, min_length=10, max_length=10)
+    isbn_13: Optional[str] = Field(None, min_length=13, max_length=13)
+
+
+class BookCreate(BookBase):
+    # When creating, we might link by ID or create nested authors/genres
+    author_ids: Optional[List[uuid.UUID]] = None
+    genre_ids: Optional[List[uuid.UUID]] = None
+    # Or allow creating authors/genres by name if they don't exist
+    author_names: Optional[List[str]] = None
+    genre_names: Optional[List[str]] = None
+
+class BookUpdate(BookBase):
+    # Allow partial updates
+    title: Optional[str] = Field(None, min_length=1, max_length=500)
+    # Allow setting related IDs during update
+    author_ids: Optional[List[uuid.UUID]] = None
+    genre_ids: Optional[List[uuid.UUID]] = None
+
+
+class Book(BookBase, UUIDSchema):
+    # Full book representation including related objects
+    authors: List[AuthorPublic] = []
+    genres: List[GenrePublic] = []
+
+
+class BookPublic(BookBase, UUIDSchema):
+    # Schema for public API responses
+    authors: List[AuthorPublic] = []
+    genres: List[GenrePublic] = []
+
+# Schema for the search request body
+class SearchRequest(BaseModel):
+    query: str = Field(..., description="Search query string (e.g., author, title, description)")
+    page: int = Field(1, ge=1)
+    page_size: int = Field(20, ge=1, le=100)
+
+# Schema for the initial search response (includes task ID)
+class SearchResponse(BaseModel):
+    task_id: Optional[str] = None
+    message: str
+    initial_results: Optional[List[BookPublic]] = None # Add this if you return initial results immediately
+    total_hits: Optional[int] = None
+
+
+================================================
+File: app/schemas/common.py
+================================================
+# app/schemas/common.py
+from pydantic import BaseModel, Field
+from typing import List, TypeVar, Generic
+import uuid
+
+T = TypeVar('T')
+
+class PaginatedResponse(BaseModel, Generic[T]):
+    results: List[T]
+    total_hits: int
+    page: int
+    page_size: int
+
+class BaseSchema(BaseModel):
+    class Config:
+        from_attributes = True # Changed from orm_mode in Pydantic v2
+
+class UUIDSchema(BaseModel):
+    id: uuid.UUID
+
+
+================================================
+File: app/schemas/genre.py
+================================================
+# app/schemas/genre.py
+from pydantic import BaseModel, Field
+from .common import BaseSchema, UUIDSchema
+
+class GenreBase(BaseSchema):
+    name: str = Field(..., min_length=1, max_length=100)
+
+class GenreCreate(GenreBase):
+    pass
+
+class Genre(GenreBase, UUIDSchema):
+    pass
+
+class GenrePublic(GenreBase, UUIDSchema):
+    pass
+
+
+
+================================================
+File: app/services/search_service.py
+================================================
+# app/services/search_service.py
+from elasticsearch import AsyncElasticsearch, NotFoundError
+from elasticsearch.helpers import async_bulk
+from app.core.config import settings
+from app.core.es import get_es_client
+from app.schemas.book import Book as BookSchema # Use Pydantic model for structure
+from app.models.book import Book as BookModel # Use DB model for input data type hint
+from typing import List, Dict, Any, Tuple
+
+def _prepare_book_for_es(book: BookModel) -> Dict[str, Any]:
+    """Converts a SQLAlchemy Book model to an Elasticsearch document dict."""
+    # Store authors/genres as objects with IDs and names
+    authors = [{"id": str(a.id), "name": a.name} for a in book.authors]
+    genres = [{"id": str(g.id), "name": g.name} for g in book.genres]
+
+    # Create consolidated text field
+    search_text_parts = [book.title or ""]
+    search_text_parts.extend(a["name"] for a in authors)
+    search_text_parts.extend(g["name"] for g in genres)
+    search_text_parts.append(book.summary or "")
+    search_text = " ".join(filter(None, search_text_parts))
+
+    # Prepare title_sort (simple example: remove leading articles)
+    title_sort = book.title.lower()
+    for article in ["the ", "a ", "an "]:
+        if title_sort.startswith(article):
+            title_sort = title_sort[len(article):]
+            break
+
+    doc = {
+        "id": str(book.id), # Use string representation of UUID
+        "title": book.title,
+        "title_sort": title_sort,
+        "authors": authors,
+        "year_published": book.year_published,
+        "genres": genres,
+        "summary": book.summary,
+        "age_rating": book.age_rating,
+        "language": book.language,
+        "book_size_pages": book.book_size_pages,
+        "average_rating": book.average_rating,
+        "isbn_13": book.isbn_13,
+        "search_text": search_text
+    }
+    # Remove None values to keep ES doc clean
+    return {k: v for k, v in doc.items() if v is not None}
+
+
+async def index_book(book: BookModel):
+    """Indexes or updates a single book in Elasticsearch."""
+    client = get_es_client()
+    index_name = settings.ELASTICSEARCH_INDEX_NAME
+    doc_id = str(book.id)
+    document = _prepare_book_for_es(book)
+
+    try:
+        await client.index(index=index_name, id=doc_id, document=document)
+        print(f"Indexed book {doc_id} ({book.title})")
+    except Exception as e:
+        print(f"Error indexing book {doc_id}: {e}")
+
+
+async def bulk_index_books(books: List[BookModel]):
+    """Indexes a list of books using Elasticsearch bulk API."""
+    client = get_es_client()
+    index_name = settings.ELASTICSEARCH_INDEX_NAME
+
+    actions = [
+        {
+            "_op_type": "index", # or "update" if you want partial updates
+            "_index": index_name,
+            "_id": str(book.id),
+            "_source": _prepare_book_for_es(book)
+        }
+        for book in books
+    ]
+
+    if not actions:
+        return
+
+    try:
+        success, failed = await async_bulk(client, actions, raise_on_error=False, raise_on_exception=False)
+        print(f"Bulk indexed {success} books.")
+        if failed:
+            print(f"Failed to index {len(failed)} books: {failed[:5]}...") # Log first few failures
+    except Exception as e:
+        print(f"Error during bulk indexing: {e}")
+
+
+async def delete_book_from_index(book_id: str):
+     """Deletes a book from the Elasticsearch index."""
+     client = get_es_client()
+     index_name = settings.ELASTICSEARCH_INDEX_NAME
+     try:
+         await client.delete(index=index_name, id=book_id)
+         print(f"Deleted book {book_id} from index")
+     except NotFoundError:
+          print(f"Book {book_id} not found in index for deletion.")
+     except Exception as e:
+         print(f"Error deleting book {book_id} from index: {e}")
+
+
+async def search_books_in_es(
+    query: str | None = None,
+    filters: Dict[str, Any] | None = None,
+    sort_by: str | None = None,
+    page: int = 1,
+    page_size: int = 20
+) -> Tuple[List[Dict[str, Any]], int]:
+    """Performs search and filtering in Elasticsearch."""
+    client = get_es_client()
+    index_name = settings.ELASTICSEARCH_INDEX_NAME
+    es_query: Dict[str, Any] = {"bool": {"must": [], "filter": []}}
+    sort_criteria: List[Any] = []
+
+    # 1. Add search query (if provided)
+    if query:
+        es_query["bool"]["must"].append({
+            "query_string": {
+                "query": query,
+                # Boost title and authors for relevance
+                "fields": ["title^3", "authors^2", "summary", "search_text", "genres"],
+                "default_operator": "AND" # More precise matching
+            }
+        })
+    else:
+         # If no query, match all documents
+         es_query["bool"]["must"].append({"match_all": {}})
+
+
+    # 2. Add filters
+    if filters:
+        for field, value in filters.items():
+            if value is None: continue # Skip None filters
+
+            # Handle specific filter types
+            if field == "min_year" and isinstance(value, int):
+                es_query["bool"]["filter"].append({"range": {"year_published": {"gte": value}}})
+            elif field == "max_year" and isinstance(value, int):
+                 es_query["bool"]["filter"].append({"range": {"year_published": {"lte": value}}})
+            elif field == "min_rating" and isinstance(value, (int, float)):
+                 es_query["bool"]["filter"].append({"range": {"average_rating": {"gte": value}}})
+            elif field in ["genre", "language", "author", "age_rating"]: # Keyword fields
+                 # Use 'term' for exact match on keyword fields
+                 # Adjust field name if necessary (e.g., search 'authors' field for author filter)
+                 es_field = "genres" if field == "genre" else \
+                            "authors" if field == "author" else \
+                            field
+                 es_query["bool"]["filter"].append({"term": {es_field: value}})
+            # Add more specific filter handlers here as needed
+
+    # If no filters were added, ensure the filter list isn't empty for ES
+    if not es_query["bool"]["filter"]:
+        del es_query["bool"]["filter"] # Remove empty filter clause
+
+
+    # 3. Add sorting
+    if sort_by and sort_by != "relevance":
+        field_map = {
+            "rating": "average_rating",
+            "year": "year_published",
+            "size": "book_size_pages",
+            "title": "title_sort", # Use the keyword field for sorting title
+        }
+        order = "desc"
+        sort_field = sort_by
+        if sort_by.endswith("_asc"):
+            order = "asc"
+            sort_field = sort_by[:-4]
+        elif sort_by.endswith("_desc"):
+            order = "desc"
+            sort_field = sort_by[:-5]
+
+        es_sort_field = field_map.get(sort_field)
+        if es_sort_field:
+            sort_criteria.append({es_sort_field: {"order": order, "missing": "_last"}}) # Handle missing values
+
+    # Default sort by relevance (_score) if no other sort is specified or if sort is explicitly 'relevance'
+    # You might want _score as a secondary sort even when sorting by another field
+    sort_criteria.append({"_score": {"order": "desc"}})
+
+    # 4. Execute Search
+    try:
+        response = await client.search(
+            index=index_name,
+            query=es_query,
+            sort=sort_criteria,
+            from_=(page - 1) * page_size,
+            size=page_size,
+            track_total_hits=True # Get accurate total count
+        )
+
+        hits = response['hits']['hits']
+        total_hits = response['hits']['total']['value']
+        results = [hit['_source'] for hit in hits] # Return the source document
+        return results, total_hits
+
+    except Exception as e:
+        print(f"Error searching Elasticsearch: {e}")
+        # In a real app, log this error properly
+        return [], 0
+
+
+
+================================================
+File: app/tasks/scrape.py
+================================================
+# app/tasks/scrape.py
+import time
+import random
+import asyncio
+import httpx
+import json
+from typing import List, Dict, Any, Optional, Tuple
+from urllib.parse import urlencode
+import traceback # Import traceback for logging exceptions
+
+from app.core.celery_app import celery_app
+from app.core.config import settings
+from app.core.db import AsyncSessionLocal
+from app.crud.crud_book import find_existing_book, create_book, update_book
+from app.schemas.book import BookCreate, BookUpdate
+from app.services.search_service import index_book
+
+# Default parameters for external API calls within the task
+DEFAULT_MAX_RESULTS_PER_CALL = 5 # Fetch fewer results per individual call to avoid overwhelming API/processing
+SEARCH_SOURCES = ["openlib", "google"]
+SEARCH_FIELDS = ["author", "title"] # Fields to use the query string in
+
+# --- Helper Function to Parse External API Data (Unchanged logic, added safety) ---
+def parse_external_book(book_data: Dict[str, Any], authors_map: Dict[str, str], genres_map: Dict[str, str], book_author_rels: Dict[str, List[str]], book_genre_rels: Dict[str, List[str]]) -> Optional[BookCreate]:
+    """
+    Parses a book dictionary from the external API into a BookCreate schema.
+    """
+    book_id = book_data.get("id")
+    if not book_id:
+        # print(f"Skipping book data due to missing ID: {book_data.get('title')}")
+        return None
+
+    # Find associated author and genre names using the relationship maps
+    # Use .get() with default [] for safety
+    author_ids_for_book = book_author_rels.get(book_id, [])
+    genre_ids_for_book = book_genre_rels.get(book_id, [])
+
+    author_names = [authors_map[author_id] for author_id in author_ids_for_book if author_id in authors_map]
+    genre_names = [genres_map[genre_id] for genre_id in genre_ids_for_book if genre_id in genres_map]
+
+    # Handle potentially stringified JSON in rating_details
+    rating_details_raw = book_data.get("rating_details")
+    rating_details_parsed = None
+    if isinstance(rating_details_raw, str):
+        try:
+            rating_details_parsed = json.loads(rating_details_raw)
+            # Optional: Further validation/transformation if needed
+            # Example: Ensure it's a list of dicts
+            if isinstance(rating_details_parsed, dict): # Wrap single dict in a list if necessary
+                 # Check structure if needed, e.g., look for known keys like 'open_library'
+                 # This part depends heavily on the *actual* structure within the string
+                 if "open_library" in rating_details_parsed:
+                     # Transform if needed, e.g., extract rating/votes
+                     ol_data = rating_details_parsed["open_library"]
+                     rating_details_parsed = [{
+                         "source": "OpenLibrary",
+                         "rating": ol_data.get("rating"),
+                         "votes": ol_data.get("votes")
+                     }]
+                 else:
+                    rating_details_parsed = [rating_details_parsed] # Simple wrap
+            elif not isinstance(rating_details_parsed, list):
+                rating_details_parsed = None # Invalid format
+        except json.JSONDecodeError:
+            print(f"Warning: Could not parse rating_details JSON for book {book_id}: {rating_details_raw}")
+            rating_details_parsed = None
+    elif isinstance(rating_details_raw, list):
+        rating_details_parsed = rating_details_raw # Assume it's already correct list format
+
+    # Create the BookCreate object
+    try:
+        # Use .get() with default None for safety
+        return BookCreate(
+            title=book_data.get("title"),
+            year_published=book_data.get("year_published"),
+            summary=book_data.get("summary") if book_data.get("summary") != "No description available" else None, # Handle placeholder summary
+            age_rating=book_data.get("age_rating"),
+            language=book_data.get("language"),
+            book_size_pages=book_data.get("book_size_pages"),
+            book_size_description=book_data.get("book_size_description"),
+            average_rating=book_data.get("average_rating"),
+            rating_details=rating_details_parsed,
+            source_url=book_data.get("source_url"),
+            isbn_10=book_data.get("isbn_10"),
+            isbn_13=book_data.get("isbn_13"),
+            # Pass names, CRUD functions will handle finding/creating
+            author_names=author_names,
+            genre_names=genre_names,
+        )
+    except Exception as e: # Catch potential validation errors from Pydantic
+        print(f"Error creating BookCreate schema for book {book_id} ('{book_data.get('title')}'): {e}")
+        # traceback.print_exc() # Optional: print traceback for parsing errors
+        return None
+
+# --- Helper Function for a single API call ---
+async def _fetch_from_external_api(
+    client: httpx.AsyncClient,
+    source: str,
+    params: Dict[str, Any]
+) -> Optional[Dict[str, Any]]:
+    """Makes a single call to the external API and returns the 'data' part or None on error."""
+    base_url = settings.EXTERNAL_SEARCH_API_BASE_URL
+    if not base_url:
+        # Warning logged by get_settings, no need to repeat per call
+        return None
+
+    encoded_params = urlencode({k: v for k, v in params.items() if v is not None})
+    # Construct the full API URL
+    api_url = f"{base_url}/api/search/{source}?{encoded_params}"
+    print(f"--> Calling external API: {api_url}")
+
+    try:
+        response = await client.get(api_url)
+        response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
+        raw_data = response.json()
+        print(f"<-- API call successful for: {api_url} (status: {response.status_code})")
+        if raw_data and "data" in raw_data:
+            return raw_data["data"]
+        else:
+            print(f"Warning: Invalid or empty data structure received from {api_url}")
+            return None
+    except httpx.TimeoutException:
+        print(f"Error: Timeout occurred calling {api_url}")
+        return None # Don't retry individual calls here, task retry handles broader issues
+    except httpx.HTTPStatusError as e:
+        print(f"Error: HTTP error calling {api_url}: {e.response.status_code} - {e.request.url}")
+        return None # Don't retry individual calls here
+    except (httpx.RequestError, json.JSONDecodeError) as e:
+        print(f"Error: Failed to call or parse response from {api_url}: {type(e).__name__} - {e}")
+        return None
+    except Exception as e: # Catch any other unexpected errors during the API call
+        print(f"Error: Unexpected error during API call to {api_url}: {type(e).__name__} - {e}")
+        # traceback.print_exc() # Optional: print traceback for API call errors
+        return None
+
+# --- Updated Celery Task ---
+@celery_app.task(bind=True, max_retries=3, default_retry_delay=120) # Increased default retry delay
+async def process_search_query(self, query: str):
+    """
+    Celery task to fetch book data from multiple external API sources (Google, OpenLib)
+    searching by both author and title using the provided query.
+    It aggregates results, saves/updates them in the database, and indexes in Elasticsearch.
+    Ensures the return value is always pickleable, even on failure.
+    """
+    if not query or not query.strip():
+        print("Task skipped: Received empty query.")
+        return {"query": query, "status": "skipped", "message": "Empty query"}
+
+    print(f"TASK STARTED for query: '{query}'")
+    print(f"Sources: {SEARCH_SOURCES}, Fields: {SEARCH_FIELDS}")
+
+    # Initialize counters outside the try block
+    processed_count = 0
+    created_count = 0
+    updated_count = 0
+    failed_processing_count = 0 # Count errors during DB/ES processing
+    unique_books_api_count = 0 # Total unique books fetched
+    api_calls_made = 0
+    successful_api_calls = 0
+    api_errors_encountered = 0
+
+    # --- Main task logic wrapped in try/except ---
+    try:
+        base_url = settings.EXTERNAL_SEARCH_API_BASE_URL
+        if not base_url:
+            print("Error: EXTERNAL_SEARCH_API_BASE_URL is not configured. Aborting task.")
+            # No retry needed if config is missing
+            return {"query": query, "status": "error", "message": "External API URL not configured"}
+
+
+        # --- Aggregate results from all API calls ---
+        all_books_api: List[Dict[str, Any]] = []
+        all_authors_api: List[Dict[str, Any]] = []
+        all_genres_api: List[Dict[str, Any]] = []
+        all_book_author_rels_api: List[Dict[str, str]] = []
+        all_book_genre_rels_api: List[Dict[str, str]] = []
+        # Reset counters before the loop
+        api_calls_made = 0
+        successful_api_calls = 0
+        api_errors_encountered = 0
+
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            for source in SEARCH_SOURCES:
+                for field in SEARCH_FIELDS:
+                    # Construct params based on the field we are simulating searching by
+                    params = {
+                        "author": query if field == "author" else None, # Pass query as author if field is author
+                        "title": query if field == "title" else None,   # Pass query as title if field is title
+                        "max_results": DEFAULT_MAX_RESULTS_PER_CALL,
+                        "language": "en" # Keep English for now
+                    }
+
+                    # Skip call if both author and title are None (empty query after filtering)
+                    if not params.get("author") and not params.get("title"):
+                        print(f"Skipping API call for source={source}, field={field}: Query resulted in empty params.")
+                        continue
+
+                    api_calls_made += 1
+                    api_data = await _fetch_from_external_api(client, source, params)
+
+                    if api_data:
+                        successful_api_calls += 1
+                        # Append data, duplicates will be handled later
+                        all_books_api.extend(api_data.get("books", []))
+                        all_authors_api.extend(api_data.get("authors", []))
+                        all_genres_api.extend(api_data.get("genres", []))
+                        relationships = api_data.get("relationships", {})
+                        all_book_author_rels_api.extend(relationships.get("book_authors", []))
+                        all_book_genre_rels_api.extend(relationships.get("book_genres", []))
+                    else:
+                        print(f"API call failed or returned no data for source={source}, field={field}.")
+                        api_errors_encountered += 1
+                        # Optional: Add a small delay if a call failed?
+                        # await asyncio.sleep(1)
+
+                    # Optional: Add delay between API calls to avoid rate limiting
+                    await asyncio.sleep(random.uniform(0.5, 1.5))
+
+        print(f"Finished API calls. Made: {api_calls_made}, Successful: {successful_api_calls}, Errors: {api_errors_encountered}.")
+        print(f"Aggregated: {len(all_books_api)} books, {len(all_authors_api)} authors, {len(all_genres_api)} genres.")
+
+        # --- Process Aggregated Data ---
+        if not all_books_api:
+            print(f"No books found in total for query '{query}' from external APIs.")
+            # Return a simple dictionary
+            return {
+                "query": query,
+                "status": "completed_no_results",
+                "message": "No books found from APIs",
+                "api_calls_made": int(api_calls_made),
+                "successful_api_calls": int(successful_api_calls),
+                "api_errors_encountered": int(api_errors_encountered),
+            }
+
+        # --- Build unique lookup maps ---
+        # Use dicts to automatically handle duplicate IDs (last one wins, which is fine)
+        authors_map = {a["id"]: a["name"] for a in all_authors_api if "id" in a and "name" in a}
+        genres_map = {g["id"]: g.get("original_name", g.get("name")) for g in all_genres_api if "id" in g and ("name" in g or "original_name" in g)}
+
+        # Build relationship maps {book_id: set(author_id/genre_id)} to handle duplicates
+        book_author_rels: Dict[str, set[str]] = {}
+        for rel in all_book_author_rels_api:
+            book_id = rel.get("book_id")
+            author_id = rel.get("author_id")
+            if book_id and author_id:
+                book_author_rels.setdefault(book_id, set()).add(author_id)
+
+        book_genre_rels: Dict[str, set[str]] = {}
+        for rel in all_book_genre_rels_api:
+            book_id = rel.get("book_id")
+            genre_id = rel.get("genre_id")
+            if book_id and genre_id:
+                book_genre_rels.setdefault(book_id, set()).add(genre_id)
+
+        # Convert relationship sets back to lists for the parser function
+        book_author_rels_list: Dict[str, List[str]] = {k: list(v) for k, v in book_author_rels.items()}
+        book_genre_rels_list: Dict[str, List[str]] = {k: list(v) for k, v in book_genre_rels.items()}
+
+        # --- Deduplicate Books based on ID before processing ---
+        # (External API might return the same book multiple times from different calls)
+        unique_books_api: Dict[str, Dict[str, Any]] = {}
+        for book in all_books_api:
+            book_id = book.get("id")
+            if book_id:
+                # If duplicate ID, keep the one already stored (or implement merge logic if needed)
+                if book_id not in unique_books_api:
+                     unique_books_api[book_id] = book
+        unique_books_api_count = len(unique_books_api)
+        print(f"Processing {unique_books_api_count} unique books (by ID) after aggregation.")
+
+
+        # --- Database Interaction ---
+        # Reset processing counters before the loop
+        processed_count = 0
+        created_count = 0
+        updated_count = 0
+        failed_processing_count = 0
+        # Use a single session for the main processing block for efficiency
+        async with AsyncSessionLocal() as db:
+            # Process unique books only
+            for book_api_data in unique_books_api.values():
+                # Parse the API data into our schema
+                book_create_schema = parse_external_book(
+                    book_api_data, authors_map, genres_map, book_author_rels_list, book_genre_rels_list
+                )
+
+                if not book_create_schema:
+                    # Parsing errors are logged inside parse_external_book
+                    failed_processing_count += 1
+                    continue
+
+                try:
+                    # Check if book exists (using ISBN first, then title/author match)
+                    existing_book = await find_existing_book(db, book_create_schema)
+
+                    if existing_book:
+                        # print(f"Updating existing book: {existing_book.title} ({existing_book.id})")
+                        # Create an update schema, excluding fields that shouldn't overwrite
+                        # Ensure author_names/genre_names are included if update_book uses them
+                        update_data = BookUpdate(
+                            **book_create_schema.model_dump(exclude_unset=True, exclude={'author_names', 'genre_names'})
+                        )
+                        updated_book = await update_book(db, existing_book, update_data)
+                        await index_book(updated_book) # Update ES index
+                        updated_count += 1
+                    else:
+                        # print(f"Creating new book: {book_create_schema.title}")
+                        # create_book already handles author_names/genre_names
+                        new_book = await create_book(db, book_create_schema)
+                        await index_book(new_book) # Index new book in ES
+                        created_count += 1
+
+                    processed_count += 1
+                    # Commit periodically to save progress and free memory/locks
+                    if processed_count > 0 and processed_count % 10 == 0:
+                        try:
+                            await db.commit()
+                            print(f"Committed batch at {processed_count} processed books.")
+                        except Exception as commit_e:
+                            print(f"ERROR during batch commit at {processed_count}: {type(commit_e).__name__} - {commit_e}")
+                            await db.rollback() # Rollback the failed commit batch
+                            # Maybe re-raise or handle differently? For now, log and continue processing remaining items.
+                            # The error will likely re-occur on final commit.
+
+                except Exception as book_process_e: # Catch exceptions per book processing
+                    failed_processing_count += 1
+                    print(f"Error processing book '{book_create_schema.title}' (ID: {book_api_data.get('id')}): {type(book_process_e).__name__} - {book_process_e}")
+                    # traceback.print_exc() # Optional: print full traceback to logs
+                    await db.rollback() # Rollback only the current book's changes
+
+            # Final commit for any remaining items outside the loop
+            try:
+                await db.commit()
+                print("Committed final batch.")
+            except Exception as final_commit_e:
+                 print(f"ERROR during final commit for query '{query}': {type(final_commit_e).__name__} - {final_commit_e}")
+                 traceback.print_exc()
+                 await db.rollback()
+                 # Don't re-raise, let the task complete and report failure in the return value
+
+
+        # If we reached here, the core logic completed without crashing the task execution.
+        # Return a successful result dictionary.
+        print(f"TASK FINISHED SUCCESSFULLY for query: '{query}'.")
+        print(f"Results => Processed: {processed_count}, Created: {created_count}, Updated: {updated_count}, Failed (processing): {failed_processing_count} (out of {unique_books_api_count} unique books fetched).")
+        # Ensure all values in the return dict are serializable
+        return {
+            "query": query,
+            "status": "completed",
+            "processed_count": int(processed_count),
+            "created_count": int(created_count),
+            "updated_count": int(updated_count),
+            "failed_processing_count": int(failed_processing_count),
+            "unique_books_fetched": int(unique_books_api_count),
+            "api_calls_made": int(api_calls_made),
+            "successful_api_calls": int(successful_api_calls),
+            "api_errors_encountered": int(api_errors_encountered),
+        }
+
+    except Exception as overall_task_e: # Catch any exception that escapes the core logic block
+        # This handles errors during API aggregation, map building, or unexpected issues
+        error_type = type(overall_task_e).__name__
+        error_message = str(overall_task_e)
+        print(f"OVERALL TASK FAILED for query '{query}': {error_type} - {error_message}")
+        # Log the full traceback separately, don't include it directly in the return dict
+        traceback.print_exc()
+
+        # Return an extremely simple, guaranteed-pickleable error dictionary.
+        # Avoid including complex objects or detailed tracebacks here.
+        # Only include basic strings and numbers.
+        return {
+            "query": query,
+            "status": "failed",
+            "error_type": error_type,
+            "error_message": "Task failed due to an internal error. Check worker logs for details.", # Generic message
+            # Include simple numeric counts if available (ensure they are ints)
+            "processed_count_before_failure": int(processed_count),
+            "failed_processing_count": int(failed_processing_count),
+            "unique_books_fetched": int(unique_books_api_count),
+            "api_calls_made": int(api_calls_made),
+            "successful_api_calls": int(successful_api_calls),
+            "api_errors_encountered": int(api_errors_encountered),
+        }
+
+
+
+================================================
+File: scripts/generate_data.py
+================================================
+# scripts/generate_data.py
+import sys
+from pathlib import Path
+
+# Add project root to Python path
+sys.path.append(str(Path(__file__).parent.parent))
+import asyncio
+import random
+import uuid
+from faker import Faker
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from sqlalchemy.future import select
+
+# Adjust imports based on your final project structure
+from app.core.config import settings
+from app.models.book import Book
+from app.models.author import Author
+from app.models.genre import Genre
+from app.crud.crud_book import create_book
+from app.crud.crud_author import get_or_create_author
+from app.crud.crud_genre import get_or_create_genre
+from app.schemas.book import BookCreate
+from app.services.search_service import bulk_index_books # Use bulk indexing
+
+fake = Faker()
+
+# Use the database URL from settings
+DATABASE_URL = settings.DATABASE_URL
+
+# Setup async engine and session
+engine = create_async_engine(DATABASE_URL, echo=False)
+AsyncSessionLocal = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
+
+async def generate_authors(db: AsyncSession, count: int) -> list[Author]:
+    authors = []
+    print(f"Generating {count} authors...")
+    for _ in range(count):
+        name = fake.name()
+        # Avoid creating duplicates during generation if possible
+        result = await db.execute(select(Author).where(Author.name == name))
+        existing = result.scalars().first()
+        if not existing:
+            author = Author(name=name)
+            db.add(author)
+            authors.append(author)
+    await db.flush() # Flush to get IDs assigned
+    print(f"Generated {len(authors)} unique authors.")
+    # Fetch all authors now including pre-existing ones potentially
+    all_authors_result = await db.execute(select(Author))
+    return all_authors_result.scalars().all()
+
+
+async def generate_genres(db: AsyncSession, genres_list: list[str]) -> list[Genre]:
+    genres = []
+    print(f"Generating/Fetching {len(genres_list)} genres...")
+    for name in genres_list:
+         # Avoid creating duplicates during generation if possible
+        result = await db.execute(select(Genre).where(Genre.name == name))
+        existing = result.scalars().first()
+        if not existing:
+            genre = Genre(name=name)
+            db.add(genre)
+            genres.append(genre)
+        else:
+            genres.append(existing) # Use existing genre
+    await db.flush()
+    print(f"Ensured {len(genres)} genres exist.")
+    return genres
+
+async def generate_books(db: AsyncSession, count: int, authors: list[Author], genres: list[Genre]):
+    books_to_create = []
+    print(f"Generating {count} books...")
+    for i in range(count):
+        if not authors or not genres:
+            print("Warning: No authors or genres available to assign.")
+            break
+
+        book_data = BookCreate(
+            title=fake.catch_phrase() + " " + random.choice(["Chronicles", "Secrets", "Journey", "Legacy", "Tales"]),
+            year_published=random.randint(1950, 2025),
+            summary=fake.paragraph(nb_sentences=5),
+            age_rating=random.choice(["All", "7+", "13+", "16+", "18+", None]),
+            language=random.choice(["English", "Spanish", "French", "German", "Japanese"]),
+            book_size_pages=random.randint(150, 1200),
+            average_rating=round(random.uniform(2.5, 5.0), 1) if random.random() > 0.1 else None,
+            isbn_13=f"978{random.randint(1000000000, 9999999999)}" if random.random() > 0.05 else None, # Occasionally missing ISBN
+            # Assign random authors/genres by name for simplicity here
+            # In create_book, it handles finding/creating them
+            author_names=[author.name for author in random.sample(authors, k=random.randint(1, min(3, len(authors))))],
+            genre_names=[genre.name for genre in random.sample(genres, k=random.randint(1, min(4, len(genres))))]
+        )
+        books_to_create.append(book_data)
+
+        if (i + 1) % 100 == 0:
+             print(f"Prepared {i+1}/{count} books...")
+
+    # Create books in the database
+    created_books_db = []
+    for book_data in books_to_create:
+         # Use the existing CRUD function which handles relationships
+        try:
+            # Need get_or_create logic within create_book or call it here
+            # For simplicity, assume create_book handles names correctly now
+             created_book = await create_book(db, book_data)
+             created_books_db.append(created_book)
+             if len(created_books_db) % 50 == 0:
+                  print(f"Saved {len(created_books_db)} books to DB...")
+        except Exception as e:
+            # Catch potential unique constraint errors (e.g., duplicate ISBN)
+            print(f"Error creating book '{book_data.title}': {e}. Skipping.")
+            await db.rollback() # Rollback the specific failed book attempt
+            # Ensure the session is still usable after rollback for the next book
+            # If using context manager per book, this is handled automatically
+
+    print(f"Created {len(created_books_db)} books in the database.")
+    return created_books_db
+
+
+async def main(num_authors: int = 50, num_books: int = 500):
+    genres_list = [
+        "Fiction", "Science Fiction", "Fantasy", "Mystery", "Thriller", "Romance",
+        "Historical Fiction", "Non-Fiction", "Biography", "History", "Science",
+        "Self-Help", "Adventure", "Children's", "Young Adult", "Poetry", "Horror"
+    ]
+
+    created_books = []
+    async with AsyncSessionLocal() as session:
+        async with session.begin(): # Use transaction
+            # Generate Authors and Genres first
+            authors = await generate_authors(session, num_authors)
+            genres = await generate_genres(session, genres_list)
+
+            # Generate Books
+            created_books = await generate_books(session, num_books, authors, genres)
+
+    print("\nDatabase population complete.")
+
+    # Index the created books in Elasticsearch
+    if created_books:
+        print(f"\nStarting Elasticsearch indexing for {len(created_books)} books...")
+        await bulk_index_books(created_books)
+        print("Elasticsearch indexing complete.")
+    else:
+        print("\nNo books were created, skipping Elasticsearch indexing.")
+
+
+if __name__ == "__main__":
+    # Example usage: python scripts/generate_data.py
+    # Example usage: python scripts/generate_data.py --books 1000
+    import argparse
+    parser = argparse.ArgumentParser(description="Generate sample book data.")
+    parser.add_argument('--authors', type=int, default=50, help='Number of authors to generate.')
+    parser.add_argument('--books', type=int, default=500, help='Number of books to generate.')
+    args = parser.parse_args()
+
+    asyncio.run(main(num_authors=args.authors, num_books=args.books))
+
